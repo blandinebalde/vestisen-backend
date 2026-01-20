@@ -19,11 +19,12 @@ import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/auth")
-@CrossOrigin(origins = "*")
+
 public class AuthController {
     
     private static final Logger logger = LoggerFactory.getLogger(AuthController.class);
@@ -42,8 +43,8 @@ public class AuthController {
         User user = userService.findByEmail(request.getEmail())
                 .orElseThrow(() -> new RuntimeException("Invalid email or password"));
         
-        // Vérifier si l'email est vérifié
-        if (!user.isEmailVerified()) {
+        // Vérifier si l'email est vérifié (sauf pour les admins)
+        if (!user.isEmailVerified() && user.getRole() != User.Role.ADMIN) {
             return ResponseEntity.badRequest().body("Please verify your email before logging in. Check your inbox for the verification link.");
         }
         
@@ -144,6 +145,70 @@ public class AuthController {
             logger.error("Error during password reset: {}", e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(new ErrorResponse("An error occurred. Please try again later."));
+        }
+    }
+    
+    /**
+     * Endpoint de test pour vérifier les autorités de l'utilisateur connecté
+     */
+    @GetMapping("/me")
+    public ResponseEntity<?> getCurrentUser(Authentication authentication) {
+        if (authentication == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(new ErrorResponse("Not authenticated"));
+        }
+        
+        UserDetails userDetails = (UserDetails) authentication.getPrincipal();
+        User user = userService.findByEmail(userDetails.getUsername())
+                .orElse(null);
+        
+        if (user == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(new ErrorResponse("User not found"));
+        }
+        
+        java.util.Map<String, Object> response = new java.util.HashMap<>();
+        response.put("email", user.getEmail());
+        response.put("role", user.getRole().name());
+        response.put("enabled", user.isEnabled());
+        response.put("emailVerified", user.isEmailVerified());
+        response.put("authorities", authentication.getAuthorities().stream()
+                .map(a -> a.getAuthority())
+                .collect(java.util.stream.Collectors.toList()));
+        response.put("authenticated", authentication.isAuthenticated());
+        
+        return ResponseEntity.ok(response);
+    }
+    
+    /**
+     * Endpoint de test pour vérifier l'accès admin
+     */
+    @GetMapping("/test-admin")
+    public ResponseEntity<?> testAdminAccess(Authentication authentication) {
+        if (authentication == null || !authentication.isAuthenticated()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(new ErrorResponse("Not authenticated"));
+        }
+        
+        UserDetails userDetails = (UserDetails) authentication.getPrincipal();
+        boolean isAdmin = userDetails.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+        
+        java.util.Map<String, Object> response = new java.util.HashMap<>();
+        response.put("username", userDetails.getUsername());
+        response.put("authorities", userDetails.getAuthorities().stream()
+                .map(a -> a.getAuthority())
+                .collect(java.util.stream.Collectors.toList()));
+        response.put("isAdmin", isAdmin);
+        response.put("hasRoleAdmin", userDetails.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN")));
+        
+        if (isAdmin) {
+            response.put("message", "Admin access granted");
+            return ResponseEntity.ok(response);
+        } else {
+            response.put("message", "Admin access denied");
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(response);
         }
     }
 }

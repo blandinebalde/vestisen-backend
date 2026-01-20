@@ -12,7 +12,6 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/tarifs")
-@CrossOrigin(origins = "*")
 public class TarifController {
     
     @Autowired

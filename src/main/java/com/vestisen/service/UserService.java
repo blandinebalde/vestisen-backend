@@ -180,7 +180,57 @@ public class UserService {
             admin.setPhone("+221000000000");
             admin.setRole(User.Role.ADMIN);
             admin.setEnabled(true);
+            admin.setEmailVerified(true); // Admin email is automatically verified
             userRepository.save(admin);
+            logger.info("Admin user initialized: {}", adminEmail);
+        } else {
+            // Mettre à jour l'admin existant pour s'assurer qu'il a les bonnes permissions
+            User admin = userRepository.findByEmail(adminEmail).orElse(null);
+            if (admin != null) {
+                boolean needsUpdate = false;
+                
+                // Vérifier et corriger le rôle
+                if (admin.getRole() != User.Role.ADMIN) {
+                    admin.setRole(User.Role.ADMIN);
+                    needsUpdate = true;
+                }
+                
+                // Vérifier et corriger l'état activé
+                if (!admin.isEnabled()) {
+                    admin.setEnabled(true);
+                    needsUpdate = true;
+                }
+                
+                // Vérifier et corriger l'email vérifié
+                if (!admin.isEmailVerified()) {
+                    admin.setEmailVerified(true);
+                    needsUpdate = true;
+                }
+                
+                // Vérifier si le mot de passe est correctement encodé (commence par $2a$, $2b$ ou $2y$ pour BCrypt)
+                String currentPassword = admin.getPassword();
+                if (currentPassword == null || 
+                    (!currentPassword.startsWith("$2a$") && 
+                     !currentPassword.startsWith("$2b$") && 
+                     !currentPassword.startsWith("$2y$"))) {
+                    logger.warn("Admin password is not BCrypt encoded, re-encoding it");
+                    admin.setPassword(passwordEncoder.encode(adminPassword));
+                    needsUpdate = true;
+                } else {
+                    // Vérifier si le mot de passe actuel correspond au mot de passe par défaut
+                    if (!passwordEncoder.matches(adminPassword, currentPassword)) {
+                        logger.info("Admin password does not match default, updating it");
+                        admin.setPassword(passwordEncoder.encode(adminPassword));
+                        needsUpdate = true;
+                    }
+                }
+                
+                if (needsUpdate) {
+                    userRepository.save(admin);
+                    logger.info("Admin user updated: {} - Role: {}, Enabled: {}, EmailVerified: {}", 
+                        adminEmail, admin.getRole(), admin.isEnabled(), admin.isEmailVerified());
+                }
+            }
         }
     }
 }
