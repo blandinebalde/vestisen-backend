@@ -58,7 +58,7 @@ public class Payment {
     private LocalDateTime paidAt;
     
     public enum PaymentMethod {
-        STRIPE, ORANGE_MONEY, WAVE
+        STRIPE, ORANGE_MONEY, WAVE, PAIEMENT_LIVRAISON
     }
     
     public enum PaymentStatus {

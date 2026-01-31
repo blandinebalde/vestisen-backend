@@ -29,29 +29,29 @@ public class CustomUserDetailsService implements UserDetailsService {
     private UserRepository userRepository;
     
     /**
-     * Charge les détails de l'utilisateur par email
-     * @param email l'email de l'utilisateur
+     * Charge les détails de l'utilisateur par email ou téléphone (identifiant de connexion).
+     * @param username email ou numéro de téléphone
      * @return UserDetails contenant les informations de l'utilisateur
      * @throws UsernameNotFoundException si l'utilisateur n'est pas trouvé
      */
     @Override
     @Transactional(readOnly = true)
-    public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
-        logger.debug("Loading user by email: {}", email);
+    public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
+        logger.debug("Loading user by email or phone: {}", username);
         
-        User user = userRepository.findByEmail(email)
+        User user = userRepository.findByEmailOrPhone(username)
                 .orElseThrow(() -> {
-                    logger.warn("User not found with email: {}", email);
-                    return new UsernameNotFoundException("User not found with email: " + email);
+                    logger.warn("User not found with email/phone: {}", username);
+                    return new UsernameNotFoundException("User not found: " + username);
                 });
         
         // Vérifier que l'utilisateur est activé
         if (!user.isEnabled()) {
-            logger.warn("Attempted login with disabled account: {}", email);
-            throw new UsernameNotFoundException("User account is disabled: " + email);
+            logger.warn("Attempted login with disabled account: {}", username);
+            throw new UsernameNotFoundException("User account is disabled: " + username);
         }
         
-        logger.debug("User loaded successfully: {} with role: {}", email, user.getRole());
+        logger.debug("User loaded successfully: {} with role: {}", user.getEmail(), user.getRole());
         logger.debug("User enabled: {}, emailVerified: {}", user.isEnabled(), user.isEmailVerified());
         
         // Pour les admins, on peut permettre l'accès même si l'email n'est pas vérifié

@@ -4,10 +4,14 @@ import com.vestisen.dto.AnnonceCreateRequest;
 import com.vestisen.dto.AnnonceDTO;
 import com.vestisen.dto.AnnonceFilterRequest;
 import com.vestisen.model.Annonce;
+import com.vestisen.model.Category;
 import com.vestisen.model.PublicationTarif;
 import com.vestisen.model.User;
 import com.vestisen.repository.AnnonceRepository;
+import com.vestisen.repository.CartItemRepository;
+import com.vestisen.repository.CategoryRepository;
 import com.vestisen.repository.PublicationTarifRepository;
+import com.vestisen.service.CreditService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -15,10 +19,16 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.security.SecureRandom;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
+
+import static java.lang.Math.*;
 
 @Service
 @Transactional
@@ -28,14 +38,33 @@ public class AnnonceService {
     private AnnonceRepository annonceRepository;
     
     @Autowired
+    private CategoryRepository categoryRepository;
+    
+    @Autowired
     private PublicationTarifRepository tarifRepository;
     
+    @Autowired
+    private CreditService creditService;
+
+    @Autowired
+    private CartItemRepository cartItemRepository;
+
+    @Autowired
+    private FileStorageService fileStorageService;
+    
     public AnnonceDTO createAnnonce(AnnonceCreateRequest request, User seller) {
+        Category category = categoryRepository.findById(request.getCategoryId())
+                .orElseThrow(() -> new RuntimeException("Category not found: " + request.getCategoryId()));
+        if (!category.isActive()) {
+            throw new RuntimeException("Category is not active");
+        }
+        
         Annonce annonce = new Annonce();
+        annonce.setCode(generateUniqueCode());
         annonce.setTitle(request.getTitle());
         annonce.setDescription(request.getDescription());
         annonce.setPrice(request.getPrice());
-        annonce.setCategory(request.getCategory());
+        annonce.setCategory(category);
         annonce.setPublicationType(request.getPublicationType());
         annonce.setCondition(request.getCondition());
         annonce.setSize(request.getSize());
@@ -46,11 +75,28 @@ public class AnnonceService {
         annonce.setSeller(seller);
         annonce.setStatus(Annonce.Status.PENDING);
         
-        // Calculer la date d'expiration basée sur le tarif
-        PublicationTarif tarif = tarifRepository.findByPublicationTypeAndActiveTrue(request.getPublicationType())
-                .orElseThrow(() -> new RuntimeException("Tarif not found for publication type"));
+        if (request.getToutDoitPartir() != null) annonce.setToutDoitPartir(request.getToutDoitPartir());
+        if (request.getOriginalPrice() != null) annonce.setOriginalPrice(request.getOriginalPrice());
+        if (request.getIsLot() != null) annonce.setLot(request.getIsLot());
+        if (request.getAcceptPaymentOnDelivery() != null) annonce.setAcceptPaymentOnDelivery(request.getAcceptPaymentOnDelivery());
+        if (request.getLatitude() != null) annonce.setLatitude(request.getLatitude());
+        if (request.getLongitude() != null) annonce.setLongitude(request.getLongitude());
         
-        annonce.setExpiresAt(LocalDateTime.now().plusDays(tarif.getDurationDays()));
+        PublicationTarif tarif = tarifRepository.findByTypeNameAndActiveTrue(request.getPublicationType())
+                .orElseThrow(() -> new RuntimeException("Tarif not found for publication type: " + request.getPublicationType()));
+        
+        java.math.BigDecimal creditCost = tarif.getPrice();
+        if (creditCost == null || creditCost.compareTo(java.math.BigDecimal.ZERO) <= 0) {
+            creditCost = java.math.BigDecimal.ZERO;
+        }
+        creditService.deductCredits(seller, creditCost);
+        
+        Integer days = tarif.getDurationDays();
+        if (days != null && days > 0) {
+            annonce.setExpiresAt(LocalDateTime.now().plusDays(days));
+        } else {
+            annonce.setExpiresAt(null); // 0 ou null = durée illimitée
+        }
         
         Annonce saved = annonceRepository.save(annonce);
         return toDTO(saved);
@@ -86,15 +132,27 @@ public class AnnonceService {
         
         Pageable pageable = PageRequest.of(filter.getPage(), filter.getPageSize(), sort);
         
+        Double latMin = null, latMax = null, lngMin = null, lngMax = null;
+        if (filter.getLatitude() != null && filter.getLongitude() != null && filter.getRadiusKm() != null && filter.getRadiusKm() > 0) {
+            double deltaLat = filter.getRadiusKm() / 111.0;
+            double deltaLng = filter.getRadiusKm() / (111.0 * max(0.01, cos(toRadians(filter.getLatitude()))));
+            latMin = filter.getLatitude() - deltaLat;
+            latMax = filter.getLatitude() + deltaLat;
+            lngMin = filter.getLongitude() - deltaLng;
+            lngMax = filter.getLongitude() + deltaLng;
+        }
+        
         Page<Annonce> annonces = annonceRepository.searchAnnonces(
             Annonce.Status.APPROVED,
-            filter.getCategory(),
+            filter.getCategoryId(),
             filter.getMinPrice(),
             filter.getMaxPrice(),
             filter.getSize(),
             filter.getBrand(),
             filter.getCondition(),
             filter.getSearch(),
+            filter.getToutDoitPartir(),
+            latMin, latMax, lngMin, lngMax,
             pageable
         );
         
@@ -117,9 +175,9 @@ public class AnnonceService {
         return toDTO(annonce);
     }
     
-    public List<AnnonceDTO> getTopAnnonces(Annonce.PublicationType type, int limit) {
+    public List<AnnonceDTO> getTopAnnonces(String typeName, int limit) {
         List<Annonce> annonces = annonceRepository.findByPublicationTypeAndStatusOrderByCreatedAtDesc(
-            type, Annonce.Status.APPROVED);
+            typeName, Annonce.Status.APPROVED);
         // Limiter les résultats
         return annonces.stream()
                 .limit(limit)
@@ -155,13 +213,32 @@ public class AnnonceService {
         return toDTO(annonceRepository.save(annonce));
     }
     
+    private static final String CODE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    private static final SecureRandom RANDOM = new SecureRandom();
+
+    private String generateUniqueCode() {
+        StringBuilder sb = new StringBuilder(18);
+        for (int i = 0; i < 18; i++) {
+            sb.append(CODE_CHARS.charAt(RANDOM.nextInt(CODE_CHARS.length())));
+        }
+        String code = sb.toString();
+        if (annonceRepository.existsByCode(code)) {
+            return generateUniqueCode();
+        }
+        return code;
+    }
+
     public AnnonceDTO toDTO(Annonce annonce) {
         AnnonceDTO dto = new AnnonceDTO();
         dto.setId(annonce.getId());
+        dto.setCode(annonce.getCode());
         dto.setTitle(annonce.getTitle());
         dto.setDescription(annonce.getDescription());
         dto.setPrice(annonce.getPrice());
-        dto.setCategory(annonce.getCategory());
+        if (annonce.getCategory() != null) {
+            dto.setCategoryId(annonce.getCategory().getId());
+            dto.setCategoryName(annonce.getCategory().getName());
+        }
         dto.setPublicationType(annonce.getPublicationType());
         dto.setCondition(annonce.getCondition());
         dto.setSize(annonce.getSize());
@@ -178,6 +255,69 @@ public class AnnonceService {
         dto.setCreatedAt(annonce.getCreatedAt());
         dto.setPublishedAt(annonce.getPublishedAt());
         dto.setExpiresAt(annonce.getExpiresAt());
+        dto.setToutDoitPartir(annonce.isToutDoitPartir());
+        dto.setOriginalPrice(annonce.getOriginalPrice());
+        dto.setLot(annonce.isLot());
+        dto.setAcceptPaymentOnDelivery(annonce.isAcceptPaymentOnDelivery());
+        dto.setLatitude(annonce.getLatitude());
+        dto.setLongitude(annonce.getLongitude());
         return dto;
+    }
+
+    public List<AnnonceDTO> getMyPurchases(Long buyerId) {
+        List<Annonce> list = annonceRepository.findByBuyer_IdOrderByCreatedAtDesc(buyerId, PageRequest.of(0, 100));
+        return list.stream().map(this::toDTO).collect(Collectors.toList());
+    }
+
+    /** Pour le panier / listes internes : retourne le DTO sans vérifier le statut ni incrémenter les vues. */
+    public AnnonceDTO getAnnonceDTOById(Long id) {
+        Annonce annonce = annonceRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Annonce not found"));
+        return toDTO(annonce);
+    }
+
+    /**
+     * Confirmer l'achat d'une annonce par un client : définit l'acheteur, passe le statut à SOLD,
+     * et retire l'annonce du panier de l'acheteur.
+     */
+    public AnnonceDTO buyAnnonce(Long annonceId, User buyer) {
+        Annonce annonce = annonceRepository.findById(annonceId)
+                .orElseThrow(() -> new RuntimeException("Annonce not found"));
+        if (annonce.getSeller().getId().equals(buyer.getId())) {
+            throw new RuntimeException("Vous ne pouvez pas acheter votre propre annonce");
+        }
+        if (annonce.getStatus() == Annonce.Status.SOLD) {
+            throw new RuntimeException("Cette annonce est déjà vendue");
+        }
+        if (annonce.getStatus() != Annonce.Status.APPROVED && annonce.getStatus() != Annonce.Status.PENDING) {
+            throw new RuntimeException("Annonce non disponible à la vente");
+        }
+        annonce.setBuyer(buyer);
+        annonce.setStatus(Annonce.Status.SOLD);
+        annonceRepository.save(annonce);
+        cartItemRepository.findByUserIdAndAnnonceId(buyer.getId(), annonceId).ifPresent(cartItemRepository::delete);
+        return toDTO(annonce);
+    }
+
+    /**
+     * Upload des photos pour une annonce. Stockage dans annonce/user/{codeAnnonce}/
+     * Seul le vendeur de l'annonce peut ajouter des photos.
+     */
+    public AnnonceDTO addPhotos(Long annonceId, User currentUser, MultipartFile[] files) throws IOException {
+        Annonce annonce = annonceRepository.findById(annonceId)
+                .orElseThrow(() -> new RuntimeException("Annonce not found"));
+        if (!annonce.getSeller().getId().equals(currentUser.getId())) {
+            throw new RuntimeException("Vous ne pouvez modifier que vos propres annonces");
+        }
+        String code = annonce.getCode();
+        if (code == null || code.isBlank()) {
+            throw new RuntimeException("Annonce sans code");
+        }
+        List<String> newPaths = fileStorageService.storeAnnoncePhotos(code, files);
+        List<String> images = annonce.getImages() != null ? new ArrayList<>(annonce.getImages()) : new ArrayList<>();
+        images.addAll(newPaths);
+        annonce.setImages(images);
+        annonceRepository.save(annonce);
+        return toDTO(annonce);
     }
 }

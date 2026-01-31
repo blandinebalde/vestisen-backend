@@ -42,112 +42,51 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                                     HttpServletResponse response, 
                                     FilterChain filterChain) throws ServletException, IOException {
         String requestPath = request.getRequestURI();
-        String authHeader = request.getHeader(AUTHORIZATION_HEADER);
-        
-        // Log pour toutes les requêtes vers /api/admin pour déboguer
-        if (requestPath.startsWith("/api/admin") || requestPath.startsWith("/api/auth")) {
-            logger.info("JWT Filter - Processing request to: {}", requestPath);
-            logger.info("JWT Filter - Authorization header present: {}", authHeader != null);
-            if (authHeader != null) {
-                logger.info("JWT Filter - Authorization header starts with Bearer: {}", authHeader.startsWith(BEARER_PREFIX));
-                logger.info("JWT Filter - Authorization header length: {}", authHeader.length());
-            }
-        }
-        
+
         try {
             String jwt = getJwtFromRequest(request);
-            
-            if (StringUtils.hasText(jwt)) {
-                if (requestPath.startsWith("/api/admin") || requestPath.startsWith("/api/auth")) {
-                    logger.info("JWT Filter - JWT token extracted, length: {}", jwt.length());
-                }
-                
-                if (tokenProvider.validateToken(jwt)) {
-                    String username = tokenProvider.getUsernameFromToken(jwt);
-                    
-                    if (requestPath.startsWith("/api/admin") || requestPath.startsWith("/api/auth")) {
-                        logger.info("JWT Filter - Token validated, username: {}", username);
-                    }
-                    
-                    try {
-                        UserDetails userDetails = userDetailsService.loadUserByUsername(username);
-                        
-                        // Vérifier que l'utilisateur est activé
-                        if (!userDetails.isEnabled()) {
-                            logger.warn("Attempted authentication with disabled user: {} on path: {}", username, requestPath);
-                            SecurityContextHolder.clearContext();
-                            filterChain.doFilter(request, response);
-                            return;
+
+            if (StringUtils.hasText(jwt) && tokenProvider.validateToken(jwt)) {
+                String username = tokenProvider.getUsernameFromToken(jwt);
+                try {
+                    UserDetails userDetails = userDetailsService.loadUserByUsername(username);
+
+                    if (!userDetails.isEnabled()) {
+                        if (logger.isDebugEnabled()) {
+                            logger.debug("Disabled user rejected: {} on {}", username, requestPath);
                         }
-                        
-                        // Log des autorités pour déboguer (INFO pour voir dans les logs)
-                        logger.info("JWT Filter - User {} has authorities: {} on path: {}", 
-                            username, userDetails.getAuthorities(), requestPath);
-                        logger.info("JWT Filter - User enabled: {}", userDetails.isEnabled());
-                        
-                        // Créer l'authentification avec les autorités
-                        UsernamePasswordAuthenticationToken authentication = 
+                        SecurityContextHolder.clearContext();
+                        filterChain.doFilter(request, response);
+                        return;
+                    }
+
+                    UsernamePasswordAuthenticationToken authentication =
                             new UsernamePasswordAuthenticationToken(
-                                userDetails, 
-                                null, 
-                                userDetails.getAuthorities()
+                                    userDetails,
+                                    null,
+                                    userDetails.getAuthorities()
                             );
-                        authentication.setDetails(
+                    authentication.setDetails(
                             new WebAuthenticationDetailsSource().buildDetails(request)
-                        );
-                        
-                        // Établir l'authentification dans le SecurityContext
-                        SecurityContextHolder.getContext().setAuthentication(authentication);
-                        
-                        logger.info("JWT Filter - Successfully authenticated user: {} with roles: {} on path: {}", 
-                            username, userDetails.getAuthorities(), requestPath);
-                        
-                        // Vérifier que l'authentification est bien établie
-                        Authentication verifiedAuth = SecurityContextHolder.getContext().getAuthentication();
-                        if (verifiedAuth != null && verifiedAuth.isAuthenticated()) {
-                            logger.info("JWT Filter - Authentication verified in SecurityContext: {} with authorities: {}", 
-                                verifiedAuth.isAuthenticated(), verifiedAuth.getAuthorities());
-                        } else {
-                            logger.error("JWT Filter - WARNING: Authentication not properly set in SecurityContext!");
-                        }
-                    } catch (UsernameNotFoundException e) {
-                        logger.error("User not found: {} on path: {}", username, requestPath, e);
-                        SecurityContextHolder.clearContext();
-                    } catch (Exception e) {
-                        logger.error("Error loading user details for: {} on path: {}", username, requestPath, e);
-                        SecurityContextHolder.clearContext();
+                    );
+                    SecurityContextHolder.getContext().setAuthentication(authentication);
+                } catch (UsernameNotFoundException e) {
+                    if (logger.isDebugEnabled()) {
+                        logger.debug("User not found for JWT: {} on {}", username, requestPath);
                     }
-                } else {
-                    logger.warn("Invalid JWT token on path: {}", requestPath);
-                    if (requestPath.startsWith("/api/admin") || requestPath.startsWith("/api/auth")) {
-                        logger.error("JWT Filter - Token validation failed for request to: {}", requestPath);
-                    }
+                    SecurityContextHolder.clearContext();
+                } catch (Exception e) {
+                    logger.error("JWT user load failed for path {}", requestPath, e);
                     SecurityContextHolder.clearContext();
                 }
             } else {
-                if (requestPath.startsWith("/api/admin") || requestPath.startsWith("/api/auth")) {
-                    logger.warn("JWT Filter - No JWT token found in request to: {}", requestPath);
-                    logger.warn("JWT Filter - Authorization header value: {}", authHeader);
-                    logger.warn("JWT Filter - All headers: {}", java.util.Collections.list(request.getHeaderNames()));
-                }
+                SecurityContextHolder.clearContext();
             }
         } catch (Exception ex) {
-            logger.error("Could not set user authentication in security context for path: {}", requestPath, ex);
-            ex.printStackTrace();
+            logger.error("JWT filter error for path {}", requestPath, ex);
             SecurityContextHolder.clearContext();
         }
-        
-        // Log final de l'état de l'authentification avant de passer au filtre suivant
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth != null && auth.isAuthenticated()) {
-            logger.info("JWT Filter - After processing, authentication exists: {} with authorities: {} on path: {}", 
-                auth.isAuthenticated(), auth.getAuthorities(), requestPath);
-        } else {
-            if (requestPath.startsWith("/api/admin") || requestPath.startsWith("/api/auth")) {
-                logger.warn("JWT Filter - After processing, NO authentication on path: {}", requestPath);
-            }
-        }
-        
+
         filterChain.doFilter(request, response);
     }
     

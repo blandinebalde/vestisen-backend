@@ -49,8 +49,8 @@ public class PaymentService {
             throw new RuntimeException("Payment already exists for this annonce");
         }
         
-        PublicationTarif tarif = tarifRepository.findByPublicationTypeAndActiveTrue(annonce.getPublicationType())
-                .orElseThrow(() -> new RuntimeException("Tarif not found"));
+        PublicationTarif tarif = tarifRepository.findByTypeNameAndActiveTrue(annonce.getPublicationType())
+                .orElseThrow(() -> new RuntimeException("Tarif not found for type: " + annonce.getPublicationType()));
         
         Payment payment = new Payment();
         payment.setAnnonce(annonce);
@@ -60,7 +60,10 @@ public class PaymentService {
         payment.setStatus(Payment.PaymentStatus.PENDING);
         
         // Traitement selon la méthode de paiement
-        if (paymentMethod == Payment.PaymentMethod.STRIPE) {
+        if (paymentMethod == Payment.PaymentMethod.PAIEMENT_LIVRAISON) {
+            // Paiement à la livraison : pas d'appel Stripe, statut PENDING jusqu'à confirmation manuelle
+            payment.setTransactionId("LIVRAISON-" + annonceId);
+        } else if (paymentMethod == Payment.PaymentMethod.STRIPE) {
             try {
                 Stripe.apiKey = stripeSecretKey;
                 PaymentIntentCreateParams params = PaymentIntentCreateParams.builder()
@@ -76,6 +79,7 @@ public class PaymentService {
                 throw new RuntimeException("Stripe payment creation failed", e);
             }
         }
+        // ORANGE_MONEY, WAVE : à brancher selon les APIs
         
         return paymentRepository.save(payment);
     }

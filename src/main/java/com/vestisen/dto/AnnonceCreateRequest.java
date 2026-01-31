@@ -21,10 +21,10 @@ public class AnnonceCreateRequest {
     private BigDecimal price;
     
     @NotNull(message = "Category is required")
-    private Annonce.Category category;
+    private Long categoryId;
     
-    @NotNull(message = "Publication type is required")
-    private Annonce.PublicationType publicationType;
+    @NotBlank(message = "Publication type (name) is required")
+    private String publicationType;
     
     private Annonce.Condition condition;
     private String size;
@@ -32,4 +32,14 @@ public class AnnonceCreateRequest {
     private String color;
     private String location;
     private List<String> images;
+    
+    /** Option "tout doit partir" : prix réduits / lots */
+    private Boolean toutDoitPartir;
+    private BigDecimal originalPrice;
+    private Boolean isLot;
+    /** Paiement à la livraison accepté */
+    private Boolean acceptPaymentOnDelivery;
+    /** Géolocalisation */
+    private Double latitude;
+    private Double longitude;
 }

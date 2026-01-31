@@ -10,11 +10,13 @@ import java.util.List;
 @Data
 public class AnnonceDTO {
     private Long id;
+    private String code;
     private String title;
     private String description;
     private BigDecimal price;
-    private Annonce.Category category;
-    private Annonce.PublicationType publicationType;
+    private Long categoryId;
+    private String categoryName;
+    private String publicationType;
     private Annonce.Condition condition;
     private String size;
     private String brand;
@@ -30,4 +32,10 @@ public class AnnonceDTO {
     private LocalDateTime createdAt;
     private LocalDateTime publishedAt;
     private LocalDateTime expiresAt;
+    private boolean toutDoitPartir;
+    private java.math.BigDecimal originalPrice;
+    private boolean isLot;
+    private boolean acceptPaymentOnDelivery;
+    private Double latitude;
+    private Double longitude;
 }

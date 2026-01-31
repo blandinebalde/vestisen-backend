@@ -107,10 +107,14 @@ public class SecurityConfig {
                     "/api/auth/reset-password",
                     "/api/annonces/public/**",
                     "/api/tarifs/**",
+                    "/api/categories",
                     "/api/config/**",
+                    "/api/credits/config",
                     "/error",
                     "/actuator/health"
                 ).permitAll()
+                // Photos des annonces (stockées dans uploads/images/annonce/user/...)
+                .requestMatchers("/annonce/**").permitAll()
             
                 
                 // Tous les autres endpoints nécessitent une authentification

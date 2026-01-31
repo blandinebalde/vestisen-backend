@@ -3,9 +3,11 @@ package com.vestisen.controller;
 import com.vestisen.dto.*;
 import com.vestisen.model.Annonce;
 import com.vestisen.model.Category;
+import com.vestisen.model.CreditConfig;
 import com.vestisen.model.PublicationTarif;
 import com.vestisen.model.User;
 import com.vestisen.repository.AnnonceRepository;
+import com.vestisen.repository.CreditConfigRepository;
 import com.vestisen.repository.CategoryRepository;
 import com.vestisen.repository.PublicationTarifRepository;
 import com.vestisen.repository.UserRepository;
@@ -18,6 +20,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -25,6 +28,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @RestController
@@ -49,6 +53,9 @@ public class AdminController {
     private CategoryRepository categoryRepository;
     
     @Autowired
+    private CreditConfigRepository creditConfigRepository;
+    
+    @Autowired
     private UserService userService;
     
     @Autowired
@@ -58,7 +65,7 @@ public class AdminController {
     public ResponseEntity<Page<AnnonceDTO>> getAllAnnonces(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        Pageable pageable = PageRequest.of(page, size);
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
         Page<Annonce> annonces = annonceRepository.findAll(pageable);
         return ResponseEntity.ok(annonces.map(annonceService::toDTO));
     }
@@ -74,34 +81,40 @@ public class AdminController {
     }
     
     @GetMapping("/tarifs")
-    public ResponseEntity<List<PublicationTarifDTO>> getTarifs() {
-        List<PublicationTarif> tarifs = tarifRepository.findAll();
-        List<PublicationTarifDTO> dtos = tarifs.stream().map(t -> {
+    public ResponseEntity<Page<PublicationTarifDTO>> getTarifs(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "id"));
+        Page<PublicationTarif> tarifs = tarifRepository.findAll(pageable);
+        return ResponseEntity.ok(tarifs.map(t -> {
             PublicationTarifDTO dto = new PublicationTarifDTO();
             dto.setId(t.getId());
-            dto.setPublicationType(t.getPublicationType());
+            dto.setTypeName(t.getTypeName());
             dto.setPrice(t.getPrice());
             dto.setDurationDays(t.getDurationDays());
             dto.setActive(t.isActive());
             return dto;
-        }).collect(Collectors.toList());
-        return ResponseEntity.ok(dtos);
+        }));
     }
     
     @PutMapping("/tarifs/{id}")
     public ResponseEntity<PublicationTarifDTO> updateTarif(
             @PathVariable Long id,
+            @RequestParam(required = false) String typeName,
             @RequestParam(required = false) BigDecimal price,
             @RequestParam(required = false) Integer durationDays,
             @RequestParam(required = false) Boolean active) {
         PublicationTarif tarif = tarifRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Tarif not found"));
         
+        if (typeName != null && !typeName.isBlank()) {
+            tarif.setTypeName(typeName.trim());
+        }
         if (price != null) {
             tarif.setPrice(price);
         }
         if (durationDays != null) {
-            tarif.setDurationDays(durationDays);
+            tarif.setDurationDays(durationDays <= 0 ? 0 : durationDays); // 0 = illimité (colonne NOT NULL)
         }
         if (active != null) {
             tarif.setActive(active);
@@ -111,7 +124,7 @@ public class AdminController {
         
         PublicationTarifDTO dto = new PublicationTarifDTO();
         dto.setId(saved.getId());
-        dto.setPublicationType(saved.getPublicationType());
+        dto.setTypeName(saved.getTypeName());
         dto.setPrice(saved.getPrice());
         dto.setDurationDays(saved.getDurationDays());
         dto.setActive(saved.isActive());
@@ -120,17 +133,21 @@ public class AdminController {
     
     @PostMapping("/tarifs")
     public ResponseEntity<PublicationTarifDTO> createTarif(@RequestBody PublicationTarifDTO request) {
+        if (request.getTypeName() == null || request.getTypeName().isBlank()) {
+            return ResponseEntity.badRequest().build();
+        }
         PublicationTarif tarif = new PublicationTarif();
-        tarif.setPublicationType(request.getPublicationType());
+        tarif.setTypeName(request.getTypeName().trim());
         tarif.setPrice(request.getPrice());
-        tarif.setDurationDays(request.getDurationDays());
+        Integer reqDays = request.getDurationDays();
+        tarif.setDurationDays(reqDays != null && reqDays > 0 ? reqDays : 0); // 0 = illimité
         tarif.setActive(request.isActive());
         
         PublicationTarif saved = tarifRepository.save(tarif);
         
         PublicationTarifDTO dto = new PublicationTarifDTO();
         dto.setId(saved.getId());
-        dto.setPublicationType(saved.getPublicationType());
+        dto.setTypeName(saved.getTypeName());
         dto.setPrice(saved.getPrice());
         dto.setDurationDays(saved.getDurationDays());
         dto.setActive(saved.isActive());
@@ -148,15 +165,52 @@ public class AdminController {
     
     // ========== USERS CRUD ==========
     
+    @PostMapping("/users")
+    public ResponseEntity<UserDTO> createUser(@Valid @RequestBody UserCreateRequest request) {
+        User user = new User();
+        user.setEmail(request.getEmail());
+        user.setFirstName(request.getFirstName());
+        user.setLastName(request.getLastName());
+        user.setPhone(request.getPhone());
+        user.setAddress(request.getAddress());
+        user.setWhatsapp(request.getWhatsapp());
+        user.setRole(request.getRole() != null ? request.getRole() : User.Role.USER);
+        user.setEnabled(request.getEnabled() != null ? request.getEnabled() : true);
+        user.setEmailVerified(request.getEmailVerified() != null ? request.getEmailVerified() : false);
+        User saved = userService.createUserByAdmin(user, request.getPassword());
+        UserDTO dto = new UserDTO();
+        dto.setId(saved.getId());
+        dto.setCode(saved.getCode());
+        dto.setEmail(saved.getEmail());
+        dto.setFirstName(saved.getFirstName());
+        dto.setLastName(saved.getLastName());
+        dto.setPhone(saved.getPhone());
+        dto.setAddress(saved.getAddress());
+        dto.setWhatsapp(saved.getWhatsapp());
+        dto.setRole(saved.getRole());
+        dto.setEnabled(saved.isEnabled());
+        dto.setEmailVerified(saved.isEmailVerified());
+        dto.setCreatedAt(saved.getCreatedAt());
+        dto.setUpdatedAt(saved.getUpdatedAt());
+        dto.setAnnoncesCount(0);
+        dto.setCreditBalance(saved.getCreditBalance());
+        return ResponseEntity.status(HttpStatus.CREATED).body(dto);
+    }
+
     @GetMapping("/users")
     public ResponseEntity<Page<UserDTO>> getAllUsers(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        Pageable pageable = PageRequest.of(page, size);
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
         Page<User> users = userRepository.findAll(pageable);
+        List<Long> userIds = users.getContent().stream().map(User::getId).collect(Collectors.toList());
+        Map<Long, Long> annoncesCountByUserId = userIds.isEmpty() ? Map.of() : annonceRepository.countBySellerIdIn(userIds)
+                .stream()
+                .collect(Collectors.toMap(row -> (Long) row[0], row -> (Long) row[1]));
         Page<UserDTO> dtos = users.map(user -> {
             UserDTO dto = new UserDTO();
             dto.setId(user.getId());
+            dto.setCode(user.getCode());
             dto.setEmail(user.getEmail());
             dto.setFirstName(user.getFirstName());
             dto.setLastName(user.getLastName());
@@ -168,7 +222,8 @@ public class AdminController {
             dto.setEmailVerified(user.isEmailVerified());
             dto.setCreatedAt(user.getCreatedAt());
             dto.setUpdatedAt(user.getUpdatedAt());
-            dto.setAnnoncesCount(user.getAnnonces() != null ? user.getAnnonces().size() : 0);
+            dto.setAnnoncesCount(annoncesCountByUserId.getOrDefault(user.getId(), 0L).intValue());
+            dto.setCreditBalance(user.getCreditBalance());
             return dto;
         });
         return ResponseEntity.ok(dtos);
@@ -178,9 +233,10 @@ public class AdminController {
     public ResponseEntity<UserDTO> getUserById(@PathVariable Long id) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("User not found"));
-        
+        int annoncesCount = (int) annonceRepository.countBySeller_Id(user.getId());
         UserDTO dto = new UserDTO();
         dto.setId(user.getId());
+        dto.setCode(user.getCode());
         dto.setEmail(user.getEmail());
         dto.setFirstName(user.getFirstName());
         dto.setLastName(user.getLastName());
@@ -192,7 +248,8 @@ public class AdminController {
         dto.setEmailVerified(user.isEmailVerified());
         dto.setCreatedAt(user.getCreatedAt());
         dto.setUpdatedAt(user.getUpdatedAt());
-        dto.setAnnoncesCount(user.getAnnonces() != null ? user.getAnnonces().size() : 0);
+        dto.setAnnoncesCount(annoncesCount);
+        dto.setCreditBalance(user.getCreditBalance());
         return ResponseEntity.ok(dto);
     }
     
@@ -220,6 +277,7 @@ public class AdminController {
         
         UserDTO dto = new UserDTO();
         dto.setId(saved.getId());
+        dto.setCode(saved.getCode());
         dto.setEmail(saved.getEmail());
         dto.setFirstName(saved.getFirstName());
         dto.setLastName(saved.getLastName());
@@ -231,7 +289,8 @@ public class AdminController {
         dto.setEmailVerified(saved.isEmailVerified());
         dto.setCreatedAt(saved.getCreatedAt());
         dto.setUpdatedAt(saved.getUpdatedAt());
-        dto.setAnnoncesCount(saved.getAnnonces() != null ? saved.getAnnonces().size() : 0);
+        dto.setAnnoncesCount((int) annonceRepository.countBySeller_Id(saved.getId()));
+        dto.setCreditBalance(saved.getCreditBalance());
         return ResponseEntity.ok(dto);
     }
     
@@ -252,9 +311,12 @@ public class AdminController {
     // ========== CATEGORIES CRUD ==========
     
     @GetMapping("/categories")
-    public ResponseEntity<List<CategoryDTO>> getAllCategories() {
-        List<Category> categories = categoryRepository.findAll();
-        List<CategoryDTO> dtos = categories.stream().map(cat -> {
+    public ResponseEntity<Page<CategoryDTO>> getAllCategories(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "id"));
+        Page<Category> categories = categoryRepository.findAll(pageable);
+        return ResponseEntity.ok(categories.map(cat -> {
             CategoryDTO dto = new CategoryDTO();
             dto.setId(cat.getId());
             dto.setName(cat.getName());
@@ -264,8 +326,7 @@ public class AdminController {
             dto.setCreatedAt(cat.getCreatedAt());
             dto.setUpdatedAt(cat.getUpdatedAt());
             return dto;
-        }).collect(Collectors.toList());
-        return ResponseEntity.ok(dtos);
+        }));
     }
     
     @GetMapping("/categories/{id}")
@@ -362,13 +423,24 @@ public class AdminController {
         if (request.getTitle() != null) annonce.setTitle(request.getTitle());
         if (request.getDescription() != null) annonce.setDescription(request.getDescription());
         if (request.getPrice() != null) annonce.setPrice(request.getPrice());
-        if (request.getCategory() != null) annonce.setCategory(request.getCategory());
+        if (request.getCategoryId() != null) {
+            Category cat = categoryRepository.findById(request.getCategoryId())
+                    .orElseThrow(() -> new RuntimeException("Category not found"));
+            annonce.setCategory(cat);
+        }
+        if (request.getPublicationType() != null) annonce.setPublicationType(request.getPublicationType());
         if (request.getStatus() != null) annonce.setStatus(request.getStatus());
         if (request.getSize() != null) annonce.setSize(request.getSize());
         if (request.getBrand() != null) annonce.setBrand(request.getBrand());
         if (request.getColor() != null) annonce.setColor(request.getColor());
         if (request.getLocation() != null) annonce.setLocation(request.getLocation());
         if (request.getImages() != null) annonce.setImages(request.getImages());
+        annonce.setToutDoitPartir(request.isToutDoitPartir());
+        annonce.setLot(request.isLot());
+        annonce.setAcceptPaymentOnDelivery(request.isAcceptPaymentOnDelivery());
+        if (request.getOriginalPrice() != null) annonce.setOriginalPrice(request.getOriginalPrice());
+        if (request.getLatitude() != null) annonce.setLatitude(request.getLatitude());
+        if (request.getLongitude() != null) annonce.setLongitude(request.getLongitude());
         
         Annonce saved = annonceRepository.save(annonce);
         return ResponseEntity.ok(annonceService.toDTO(saved));
@@ -381,5 +453,38 @@ public class AdminController {
         }
         annonceRepository.deleteById(id);
         return ResponseEntity.ok().build();
+    }
+    
+    // ========== CREDITS CONFIG (admin) ==========
+    
+    @GetMapping("/credits/config")
+    public ResponseEntity<CreditConfigDTO> getCreditConfig() {
+        CreditConfig config = creditConfigRepository.findAll().isEmpty()
+                ? null
+                : creditConfigRepository.findAll().get(0);
+        if (config == null) {
+            config = new CreditConfig();
+            config.setPricePerCreditFcfa(new BigDecimal("100"));
+            config = creditConfigRepository.save(config);
+        }
+        CreditConfigDTO dto = new CreditConfigDTO();
+        dto.setId(config.getId());
+        dto.setPricePerCreditFcfa(config.getPricePerCreditFcfa());
+        return ResponseEntity.ok(dto);
+    }
+    
+    @PutMapping("/credits/config")
+    public ResponseEntity<CreditConfigDTO> updateCreditConfig(@RequestBody CreditConfigDTO request) {
+        CreditConfig config = creditConfigRepository.findAll().isEmpty()
+                ? new CreditConfig()
+                : creditConfigRepository.findAll().get(0);
+        if (request.getPricePerCreditFcfa() != null && request.getPricePerCreditFcfa().compareTo(BigDecimal.ZERO) > 0) {
+            config.setPricePerCreditFcfa(request.getPricePerCreditFcfa());
+        }
+        config = creditConfigRepository.save(config);
+        CreditConfigDTO dto = new CreditConfigDTO();
+        dto.setId(config.getId());
+        dto.setPricePerCreditFcfa(config.getPricePerCreditFcfa());
+        return ResponseEntity.ok(dto);
     }
 }

@@ -10,6 +10,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
@@ -46,6 +47,7 @@ public class UserService {
         user.setPassword(passwordEncoder.encode(user.getPassword()));
         user.setEmailVerified(false);
         user.setEnabled(false); // Désactiver jusqu'à vérification email
+        user.setCode(generateUniqueUserCode());
         
         // Générer le token de vérification
         String verificationToken = UUID.randomUUID().toString();
@@ -78,6 +80,39 @@ public class UserService {
         }
         
         return savedUser;
+    }
+
+    /**
+     * Création d'un utilisateur par l'admin : pas d'email de vérification, respecte enabled/emailVerified.
+     */
+    public User createUserByAdmin(User user, String plainPassword) {
+        if (userRepository.existsByEmail(user.getEmail())) {
+            throw new RuntimeException("Un utilisateur avec cet email existe déjà");
+        }
+        if (user.getPhone() != null && !user.getPhone().isEmpty() && userRepository.existsByPhone(user.getPhone())) {
+            throw new RuntimeException("Un utilisateur avec ce numéro de téléphone existe déjà");
+        }
+        user.setPassword(passwordEncoder.encode(plainPassword));
+        user.setCode(generateUniqueUserCode());
+        // Ne pas envoyer d'email de vérification, ne pas forcer enabled/emailVerified
+        user.setVerificationToken(null);
+        user.setVerificationTokenExpiry(null);
+        return userRepository.save(user);
+    }
+
+    private static final String CODE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    private static final SecureRandom RANDOM = new SecureRandom();
+
+    private String generateUniqueUserCode() {
+        StringBuilder sb = new StringBuilder(18);
+        for (int i = 0; i < 18; i++) {
+            sb.append(CODE_CHARS.charAt(RANDOM.nextInt(CODE_CHARS.length())));
+        }
+        String code = sb.toString();
+        if (userRepository.existsByCode(code)) {
+            return generateUniqueUserCode();
+        }
+        return code;
     }
     
     public boolean verifyEmail(String token) {
@@ -166,6 +201,10 @@ public class UserService {
         return userRepository.findByEmail(email);
     }
     
+    public Optional<User> findByEmailOrPhone(String emailOrPhone) {
+        return userRepository.findByEmailOrPhone(emailOrPhone);
+    }
+    
     public Optional<User> findById(Long id) {
         return userRepository.findById(id);
     }
@@ -176,11 +215,12 @@ public class UserService {
             admin.setEmail(adminEmail);
             admin.setPassword(passwordEncoder.encode(adminPassword));
             admin.setFirstName("Admin");
-            admin.setLastName("VestiSen");
+            admin.setLastName("Vendit");
             admin.setPhone("+221000000000");
             admin.setRole(User.Role.ADMIN);
             admin.setEnabled(true);
             admin.setEmailVerified(true); // Admin email is automatically verified
+            admin.setCode(generateUniqueUserCode());
             userRepository.save(admin);
             logger.info("Admin user initialized: {}", adminEmail);
         } else {
@@ -204,6 +244,10 @@ public class UserService {
                 // Vérifier et corriger l'email vérifié
                 if (!admin.isEmailVerified()) {
                     admin.setEmailVerified(true);
+                    needsUpdate = true;
+                }
+                if (admin.getCode() == null || admin.getCode().isBlank()) {
+                    admin.setCode(generateUniqueUserCode());
                     needsUpdate = true;
                 }
                 

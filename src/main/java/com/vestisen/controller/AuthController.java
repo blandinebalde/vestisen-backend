@@ -40,8 +40,8 @@ public class AuthController {
     
     @PostMapping("/login")
     public ResponseEntity<?> login(@Valid @RequestBody AuthRequest request) {
-        User user = userService.findByEmail(request.getEmail())
-                .orElseThrow(() -> new RuntimeException("Invalid email or password"));
+        User user = userService.findByEmailOrPhone(request.getEmailOrPhone())
+                .orElseThrow(() -> new RuntimeException("Invalid email/phone or password"));
         
         // Vérifier si l'email est vérifié (sauf pour les admins)
         if (!user.isEmailVerified() && user.getRole() != User.Role.ADMIN) {
@@ -53,8 +53,9 @@ public class AuthController {
             return ResponseEntity.badRequest().body("Your account is disabled. Please contact support.");
         }
         
+        // Connexion par email ou téléphone : on passe l'identifiant saisi pour l'authentification
         Authentication authentication = authenticationManager.authenticate(
-            new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword())
+            new UsernamePasswordAuthenticationToken(request.getEmailOrPhone(), request.getPassword())
         );
         
         SecurityContextHolder.getContext().setAuthentication(authentication);
@@ -121,7 +122,9 @@ public class AuthController {
     @PostMapping("/forgot-password")
     public ResponseEntity<?> forgotPassword(@RequestBody AuthRequest request) {
         try {
-            userService.requestPasswordReset(request.getEmail());
+            User user = userService.findByEmailOrPhone(request.getEmailOrPhone())
+                    .orElseThrow(() -> new RuntimeException("User not found"));
+            userService.requestPasswordReset(user.getEmail());
             return ResponseEntity.ok().body(new SuccessResponse("Password reset link has been sent to your email."));
         } catch (RuntimeException e) {
             logger.warn("Password reset request failed: {}", e.getMessage());
@@ -159,8 +162,8 @@ public class AuthController {
         }
         
         UserDetails userDetails = (UserDetails) authentication.getPrincipal();
-        User user = userService.findByEmail(userDetails.getUsername())
-                .orElse(null);
+        User user = userService.findByEmailOrPhone(userDetails.getUsername())
+                .orElse(userService.findByEmail(userDetails.getUsername()).orElse(null));
         
         if (user == null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)

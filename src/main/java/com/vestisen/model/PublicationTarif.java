@@ -23,15 +23,16 @@ public class PublicationTarif {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false, unique = true)
-    private Annonce.PublicationType publicationType;
+    /** Nom du type de publication saisi par l'admin (ex: Standard, Premium, Top Pub) */
+    @Column(nullable = false, unique = true, length = 100)
+    private String typeName;
     
     @Column(nullable = false)
     private BigDecimal price;
     
-    @Column(nullable = false)
-    private int durationDays; // Durée de publication en jours
+    /** Durée en jours ; null ou 0 = illimitée */
+    @Column(name = "duration_days")
+    private Integer durationDays;
     
     private boolean active = true;
     

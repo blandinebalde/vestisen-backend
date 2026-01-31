@@ -1,9 +1,13 @@
 package com.vestisen.config;
 
 import com.vestisen.model.Annonce;
+import com.vestisen.model.Category;
+import com.vestisen.model.CreditConfig;
 import com.vestisen.model.PublicationTarif;
 import com.vestisen.model.User;
 import com.vestisen.repository.AnnonceRepository;
+import com.vestisen.repository.CategoryRepository;
+import com.vestisen.repository.CreditConfigRepository;
 import com.vestisen.repository.PublicationTarifRepository;
 import com.vestisen.repository.UserRepository;
 import com.vestisen.service.UserService;
@@ -37,6 +41,12 @@ import java.util.Arrays;
     private PublicationTarifRepository tarifRepository;
     
     @Autowired
+    private CreditConfigRepository creditConfigRepository;
+    
+    @Autowired
+    private CategoryRepository categoryRepository;
+    
+    @Autowired
     private AnnonceRepository annonceRepository;
     
     @Autowired
@@ -45,20 +55,56 @@ import java.util.Arrays;
     @Override
     public void run(String... args) throws Exception {
         try {
-            // Initialiser l'admin
             userService.initializeAdmin();
-            
-           
+            createDefaultCreditConfig();
+            createDefaultCategories();
+            createDefaultTarifs();
         } catch (Exception e) {
             logger.error("Error in DataInitializer.run(): {}", e.getMessage(), e);
         }
     }
     
+    private void createDefaultCreditConfig() {
+        if (creditConfigRepository.count() == 0) {
+            CreditConfig config = new CreditConfig();
+            config.setPricePerCreditFcfa(new BigDecimal("100"));
+            creditConfigRepository.save(config);
+        }
+    }
+    
+    private void createDefaultCategories() {
+        String[][] defaults = {
+            {"Vêtements femme", "Vêtements pour femmes", "👗"},
+            {"Vêtements homme", "Vêtements pour hommes", "👔"},
+            {"Accessoires", "Sacs, bijoux, chaussures...", "👜"},
+            {"Promotion", "Offres et lots", "🏷️"},
+            {"Électronique", "Téléphones, ordinateurs...", "📱"},
+            {"Maison", "Décoration, mobilier...", "🏠"}
+        };
+        for (String[] row : defaults) {
+            if (!categoryRepository.existsByName(row[0])) {
+                Category c = new Category();
+                c.setName(row[0]);
+                c.setDescription(row[1]);
+                c.setIcon(row[2]);
+                c.setActive(true);
+                categoryRepository.save(c);
+            }
+        }
+    }
+    
+    private void createDefaultTarifs() {
+        // Coût en crédits (les utilisateurs achètent des crédits puis dépensent pour publier)
+        createTarif("Standard", new BigDecimal("5"), 7);
+        createTarif("Premium", new BigDecimal("15"), 14);
+        createTarif("Top Pub", new BigDecimal("30"), 30);
+    }
+    
    
-    private void createTarif(Annonce.PublicationType type, BigDecimal price, int durationDays) {
-        if (tarifRepository.findByPublicationType(type).isEmpty()) {
+    private void createTarif(String typeName, BigDecimal price, int durationDays) {
+        if (tarifRepository.findByTypeName(typeName).isEmpty()) {
             PublicationTarif tarif = new PublicationTarif();
-            tarif.setPublicationType(type);
+            tarif.setTypeName(typeName);
             tarif.setPrice(price);
             tarif.setDurationDays(durationDays);
             tarif.setActive(true);
@@ -68,9 +114,9 @@ import java.util.Arrays;
     
     private void createSampleUsers() {
         // Créer un vendeur de démonstration
-        if (!userRepository.existsByEmail("vendeur@vestisen.com")) {
+        if (!userRepository.existsByEmail("vendeur@vendit.com")) {
             User vendeur = new User();
-            vendeur.setEmail("vendeur@vestisen.com");
+            vendeur.setEmail("vendeur@vendit.com");
             vendeur.setPassword(passwordEncoder.encode("vendeur123"));
             vendeur.setFirstName("Aminata");
             vendeur.setLastName("Diallo");
@@ -82,9 +128,9 @@ import java.util.Arrays;
         }
         
         // Créer un utilisateur de démonstration
-        if (!userRepository.existsByEmail("user@vestisen.com")) {
+        if (!userRepository.existsByEmail("user@vendit.com")) {
             User user = new User();
-            user.setEmail("user@vestisen.com");
+            user.setEmail("user@vendit.com");
             user.setPassword(passwordEncoder.encode("user123"));
             user.setFirstName("Ibrahima");
             user.setLastName("Ndiaye");
@@ -120,17 +166,23 @@ import java.util.Arrays;
             }
         }
         
-        User vendeur = userRepository.findByEmail("vendeur@vestisen.com")
-                .orElse(userRepository.findByEmail("admin@vestisen.com").orElse(null));
+        User vendeur = userRepository.findByEmail("vendeur@vendit.com")
+                .orElse(userRepository.findByEmail("admin@vendit.com").orElse(null));
         
         if (vendeur != null) {
+                Category catFemme = categoryRepository.findByName("Vêtements femme").orElse(null);
+                Category catHomme = categoryRepository.findByName("Vêtements homme").orElse(null);
+                Category catAccessoire = categoryRepository.findByName("Accessoires").orElse(null);
+                Category catPromo = categoryRepository.findByName("Promotion").orElse(null);
+                if (catFemme == null || catHomme == null) return;
+                
                 // Annonce 1: Robe traditionnelle
                 Annonce annonce1 = new Annonce();
                 annonce1.setTitle("Belle robe traditionnelle sénégalaise");
                 annonce1.setDescription("Magnifique robe traditionnelle en bazin riche, parfaite pour les cérémonies. Taille M, couleur bleu marine avec broderies dorées.");
                 annonce1.setPrice(new BigDecimal("25000"));
-                annonce1.setCategory(Annonce.Category.FEMME);
-                annonce1.setPublicationType(Annonce.PublicationType.STANDARD);
+                annonce1.setCategory(catFemme);
+                annonce1.setPublicationType("Standard");
                 annonce1.setCondition(Annonce.Condition.NEUF);
                 annonce1.setSize("M");
                 annonce1.setBrand("Artisanat Local");
@@ -150,8 +202,8 @@ import java.util.Arrays;
                 annonce2.setTitle("Chemise élégante pour homme");
                 annonce2.setDescription("Chemise de qualité supérieure, 100% coton, parfaite pour le bureau ou les occasions spéciales.");
                 annonce2.setPrice(new BigDecimal("15000"));
-                annonce2.setCategory(Annonce.Category.HOMME);
-                annonce2.setPublicationType(Annonce.PublicationType.PREMIUM);
+                annonce2.setCategory(catHomme);
+                annonce2.setPublicationType("Premium");
                 annonce2.setCondition(Annonce.Condition.TRES_BON_ETAT);
                 annonce2.setSize("L");
                 annonce2.setBrand("Zara");
@@ -171,8 +223,8 @@ import java.util.Arrays;
                 annonce3.setTitle("Sac à main en cuir authentique");
                 annonce3.setDescription("Superbe sac à main en cuir véritable, design moderne et élégant. Parfait pour toutes les occasions.");
                 annonce3.setPrice(new BigDecimal("35000"));
-                annonce3.setCategory(Annonce.Category.ACCESSOIRE);
-                annonce3.setPublicationType(Annonce.PublicationType.STANDARD);
+                annonce3.setCategory(catAccessoire != null ? catAccessoire : catFemme);
+                annonce3.setPublicationType("Standard");
                 annonce3.setCondition(Annonce.Condition.BON_ETAT);
                 annonce3.setBrand("Local Artisan");
                 annonce3.setColor("Marron");
@@ -191,8 +243,8 @@ import java.util.Arrays;
                 annonce4.setTitle("PROMOTION: Lot de 3 pagnes");
                 annonce4.setDescription("Lot de 3 magnifiques pagnes en bazin, motifs variés. Prix promotionnel pour achat groupé.");
                 annonce4.setPrice(new BigDecimal("18000"));
-                annonce4.setCategory(Annonce.Category.PROMOTION);
-                annonce4.setPublicationType(Annonce.PublicationType.TOP_PUB);
+                annonce4.setCategory(catPromo != null ? catPromo : catFemme);
+                annonce4.setPublicationType("Top Pub");
                 annonce4.setCondition(Annonce.Condition.NEUF);
                 annonce4.setBrand("Tissu Local");
                 annonce4.setColor("Multicolore");
@@ -211,8 +263,8 @@ import java.util.Arrays;
                 annonce5.setTitle("Baskets de sport neuves");
                 annonce5.setDescription("Baskets de marque, jamais portées, taille 42. Parfaites pour le sport ou le quotidien.");
                 annonce5.setPrice(new BigDecimal("12000"));
-                annonce5.setCategory(Annonce.Category.HOMME);
-                annonce5.setPublicationType(Annonce.PublicationType.STANDARD);
+                annonce5.setCategory(catHomme);
+                annonce5.setPublicationType("Standard");
                 annonce5.setCondition(Annonce.Condition.NEUF);
                 annonce5.setSize("42");
                 annonce5.setBrand("Nike");

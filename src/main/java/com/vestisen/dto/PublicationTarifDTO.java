@@ -1,6 +1,5 @@
 package com.vestisen.dto;
 
-import com.vestisen.model.Annonce;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -8,8 +7,10 @@ import java.math.BigDecimal;
 @Data
 public class PublicationTarifDTO {
     private Long id;
-    private Annonce.PublicationType publicationType;
+    /** Nom du type de publication (saisi par l'admin dans le formulaire) */
+    private String typeName;
     private BigDecimal price;
-    private int durationDays;
+    /** Durée en jours ; null ou 0 = illimitée */
+    private Integer durationDays;
     private boolean active;
 }

@@ -27,7 +27,7 @@ public class TarifController {
         List<PublicationTarifDTO> dtos = tarifs.stream().map(t -> {
             PublicationTarifDTO dto = new PublicationTarifDTO();
             dto.setId(t.getId());
-            dto.setPublicationType(t.getPublicationType());
+            dto.setTypeName(t.getTypeName());
             dto.setPrice(t.getPrice());
             dto.setDurationDays(t.getDurationDays());
             dto.setActive(t.isActive());
