@@ -41,7 +41,12 @@ public class PaymentController {
     }
     
     @PostMapping("/{id}/confirm")
-    public ResponseEntity<Payment> confirmPayment(@PathVariable Long id) {
-        return ResponseEntity.ok(paymentService.confirmPayment(id));
+    public ResponseEntity<Payment> confirmPayment(
+            @PathVariable Long id,
+            Authentication authentication) {
+        UserDetails userDetails = (UserDetails) authentication.getPrincipal();
+        User user = userRepository.findByEmail(userDetails.getUsername())
+                .orElseThrow(() -> new RuntimeException("User not found"));
+        return ResponseEntity.ok(paymentService.confirmPayment(id, user));
     }
 }

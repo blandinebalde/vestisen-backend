@@ -32,7 +32,8 @@ public class ReviewController {
     @GetMapping("/seller/{sellerId}")
     public ResponseEntity<List<ReviewDTO>> getBySeller(@PathVariable Long sellerId,
                                                        @RequestParam(defaultValue = "20") int limit) {
-        return ResponseEntity.ok(reviewService.findByRevieweeId(sellerId, limit));
+        int safeLimit = Math.min(Math.max(1, limit), 100);
+        return ResponseEntity.ok(reviewService.findByRevieweeId(sellerId, safeLimit));
     }
 
     private User getCurrentUser(Authentication auth) {

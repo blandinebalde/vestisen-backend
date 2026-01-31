@@ -11,18 +11,21 @@ import com.vestisen.repository.CreditConfigRepository;
 import com.vestisen.repository.CategoryRepository;
 import com.vestisen.repository.PublicationTarifRepository;
 import com.vestisen.repository.UserRepository;
+import com.vestisen.event.AnnonceApprovedEvent;
 import com.vestisen.service.AnnonceService;
 import com.vestisen.service.UserService;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
@@ -33,6 +36,7 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/admin")
+@PreAuthorize("hasRole('ADMIN')")
 public class AdminController {
     
     private static final Logger logger = LoggerFactory.getLogger(AdminController.class);
@@ -45,6 +49,9 @@ public class AdminController {
     
     @Autowired
     private PublicationTarifRepository tarifRepository;
+
+    @Autowired
+    private ApplicationEventPublisher applicationEventPublisher;
     
     @Autowired
     private UserRepository userRepository;
@@ -407,14 +414,9 @@ public class AdminController {
         return ResponseEntity.ok().build();
     }
     
-    // ========== ANNONCES CRUD (Complete) ==========
-    
-    @PostMapping("/annonces")
-    public ResponseEntity<AnnonceDTO> createAnnonce(@Valid @RequestBody AnnonceDTO request) {
-        // Implementation si nécessaire
-        return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();
-    }
-    
+    // ========== ANNONCES CRUD (admin : modification / suppression) ==========
+    // Création d'annonces : POST /api/annonces (AnnonceController, rôles VENDEUR/ADMIN)
+
     @PutMapping("/annonces/{id}")
     public ResponseEntity<AnnonceDTO> updateAnnonce(@PathVariable Long id, @RequestBody AnnonceDTO request) {
         Annonce annonce = annonceRepository.findById(id)
@@ -428,7 +430,11 @@ public class AdminController {
                     .orElseThrow(() -> new RuntimeException("Category not found"));
             annonce.setCategory(cat);
         }
-        if (request.getPublicationType() != null) annonce.setPublicationType(request.getPublicationType());
+        if (request.getPublicationType() != null) {
+            annonce.setPublicationType(request.getPublicationType());
+            tarifRepository.findByTypeNameAndActiveTrue(request.getPublicationType())
+                    .ifPresent(t -> annonce.setPublicationCreditCost(t.getPrice() != null ? t.getPrice() : BigDecimal.ZERO));
+        }
         if (request.getStatus() != null) annonce.setStatus(request.getStatus());
         if (request.getSize() != null) annonce.setSize(request.getSize());
         if (request.getBrand() != null) annonce.setBrand(request.getBrand());
@@ -443,6 +449,10 @@ public class AdminController {
         if (request.getLongitude() != null) annonce.setLongitude(request.getLongitude());
         
         Annonce saved = annonceRepository.save(annonce);
+        if (request.getStatus() == Annonce.Status.APPROVED) {
+            applicationEventPublisher.publishEvent(new AnnonceApprovedEvent(this, saved));
+            saved = annonceRepository.findById(id).orElseThrow(() -> new RuntimeException("Annonce not found"));
+        }
         return ResponseEntity.ok(annonceService.toDTO(saved));
     }
     

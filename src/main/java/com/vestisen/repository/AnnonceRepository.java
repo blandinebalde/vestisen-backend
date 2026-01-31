@@ -9,6 +9,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -60,6 +61,9 @@ public interface AnnonceRepository extends JpaRepository<Annonce, Long> {
         String publicationType,
         Annonce.Status status
     );
+
+    /** Annonces approuvées dont la durée de publication est dépassée (expiresAt &lt; now). */
+    List<Annonce> findByStatusAndExpiresAtNotNullAndExpiresAtBefore(Annonce.Status status, LocalDateTime date);
     
     @Query("SELECT a FROM Annonce a WHERE a.status = 'APPROVED' ORDER BY a.viewCount DESC")
     List<Annonce> findTopViewedAnnonces(Pageable pageable);

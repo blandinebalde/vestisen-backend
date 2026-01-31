@@ -1,5 +1,6 @@
 package com.vestisen.dto;
 
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.vestisen.model.Annonce;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -25,7 +26,9 @@ public class AnnonceCreateRequest {
     
     @NotBlank(message = "Publication type (name) is required")
     private String publicationType;
-    
+
+    /** État du produit (optionnel). Chaîne vide "" acceptée et convertie en null. */
+    @JsonDeserialize(using = ConditionDeserializer.class)
     private Annonce.Condition condition;
     private String size;
     private String brand;

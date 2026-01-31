@@ -47,6 +47,10 @@ public class Annonce {
     /** Nom du type de publication (référence au typeName de PublicationTarif) */
     @Column(nullable = false, length = 100)
     private String publicationType = "Standard";
+
+    /** Coût en crédits de la publication (renseigné à la création, pour tri catalogue). */
+    @Column(name = "publication_credit_cost", precision = 12, scale = 2)
+    private java.math.BigDecimal publicationCreditCost;
     
     @Enumerated(EnumType.STRING)
     private Condition condition;

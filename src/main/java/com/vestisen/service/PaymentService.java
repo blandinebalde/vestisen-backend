@@ -17,7 +17,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.List;
 
 @Service
 @Transactional
@@ -84,14 +83,15 @@ public class PaymentService {
         return paymentRepository.save(payment);
     }
     
-    public Payment confirmPayment(Long paymentId) {
+    public Payment confirmPayment(Long paymentId, User user) {
         Payment payment = paymentRepository.findById(paymentId)
                 .orElseThrow(() -> new RuntimeException("Payment not found"));
-        
+        if (!payment.getUser().getId().equals(user.getId())) {
+            throw new RuntimeException("Access denied: you can only confirm your own payment");
+        }
         if (payment.getStatus() == Payment.PaymentStatus.COMPLETED) {
             throw new RuntimeException("Payment already completed");
         }
-        
         payment.setStatus(Payment.PaymentStatus.COMPLETED);
         payment.setPaidAt(LocalDateTime.now());
         

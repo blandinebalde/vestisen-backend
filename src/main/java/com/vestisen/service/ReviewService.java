@@ -33,6 +33,9 @@ public class ReviewService {
         if (annonce.getSeller().getId().equals(reviewer.getId())) {
             throw new RuntimeException("You cannot review your own annonce");
         }
+        if (annonce.getBuyer() == null || !annonce.getBuyer().getId().equals(reviewer.getId())) {
+            throw new RuntimeException("Only the buyer of this annonce can leave a review");
+        }
         if (reviewRepository.existsByAnnonceIdAndReviewerId(annonce.getId(), reviewer.getId())) {
             throw new RuntimeException("You have already reviewed this annonce");
         }

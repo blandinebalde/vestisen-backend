@@ -115,7 +115,8 @@ public class SecurityConfig {
                 ).permitAll()
                 // Photos des annonces (stockées dans uploads/images/annonce/user/...)
                 .requestMatchers("/annonce/**").permitAll()
-            
+                // Administration : réservé au rôle ADMIN uniquement
+                .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 
                 // Tous les autres endpoints nécessitent une authentification
                 .anyRequest().authenticated()

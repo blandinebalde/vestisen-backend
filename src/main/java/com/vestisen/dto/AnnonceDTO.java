@@ -17,6 +17,7 @@ public class AnnonceDTO {
     private Long categoryId;
     private String categoryName;
     private String publicationType;
+    private BigDecimal publicationCreditCost;
     private Annonce.Condition condition;
     private String size;
     private String brand;

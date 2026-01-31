@@ -52,6 +52,12 @@ public class CartController {
         }
         Annonce annonce = annonceRepository.findById(annonceId)
                 .orElseThrow(() -> new RuntimeException("Annonce not found"));
+        if (annonce.getSeller().getId().equals(user.getId())) {
+            return ResponseEntity.badRequest().build();
+        }
+        if (annonce.getStatus() == Annonce.Status.SOLD) {
+            return ResponseEntity.badRequest().build();
+        }
         CartItem item = new CartItem();
         item.setUser(user);
         item.setAnnonce(annonce);

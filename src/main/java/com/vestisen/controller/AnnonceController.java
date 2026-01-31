@@ -15,6 +15,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
@@ -61,6 +62,7 @@ public class AnnonceController {
         return ResponseEntity.ok().build();
     }
     
+    @PreAuthorize("hasAnyRole('VENDEUR', 'ADMIN')")
     @PostMapping
     public ResponseEntity<AnnonceDTO> createAnnonce(
             @Valid @RequestBody AnnonceCreateRequest request,
@@ -68,10 +70,6 @@ public class AnnonceController {
         UserDetails userDetails = (UserDetails) authentication.getPrincipal();
         User user = userRepository.findByEmail(userDetails.getUsername())
                 .orElseThrow(() -> new RuntimeException("User not found"));
-        // Seuls les vendeurs et administrateurs peuvent publier des annonces
-        if (user.getRole() != User.Role.VENDEUR && user.getRole() != User.Role.ADMIN) {
-            return ResponseEntity.status(403).build();
-        }
         return ResponseEntity.ok(annonceService.createAnnonce(request, user));
     }
     

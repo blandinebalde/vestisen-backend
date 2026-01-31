@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -40,28 +41,25 @@ public class AuthController {
     
     @PostMapping("/login")
     public ResponseEntity<?> login(@Valid @RequestBody AuthRequest request) {
-        User user = userService.findByEmailOrPhone(request.getEmailOrPhone())
-                .orElseThrow(() -> new RuntimeException("Invalid email/phone or password"));
-        
-        // Vérifier si l'email est vérifié (sauf pour les admins)
-        if (!user.isEmailVerified() && user.getRole() != User.Role.ADMIN) {
-            return ResponseEntity.badRequest().body("Please verify your email before logging in. Check your inbox for the verification link.");
+        try {
+            User user = userService.findByEmailOrPhone(request.getEmailOrPhone())
+                    .orElseThrow(() -> new BadCredentialsException("Invalid credentials"));
+            if (!user.isEmailVerified() && user.getRole() != User.Role.ADMIN) {
+                return ResponseEntity.badRequest().body("Please verify your email before logging in. Check your inbox for the verification link.");
+            }
+            if (!user.isEnabled()) {
+                return ResponseEntity.badRequest().body("Your account is disabled. Please contact support.");
+            }
+            Authentication authentication = authenticationManager.authenticate(
+                new UsernamePasswordAuthenticationToken(request.getEmailOrPhone(), request.getPassword())
+            );
+            SecurityContextHolder.getContext().setAuthentication(authentication);
+            String token = tokenProvider.generateToken(authentication);
+            return ResponseEntity.ok(new AuthResponse(token, user));
+        } catch (BadCredentialsException e) {
+            logger.warn("Login failed for: {}", request.getEmailOrPhone());
+            return ResponseEntity.badRequest().body(new ErrorResponse("Invalid email/phone or password"));
         }
-        
-        // Vérifier si le compte est activé
-        if (!user.isEnabled()) {
-            return ResponseEntity.badRequest().body("Your account is disabled. Please contact support.");
-        }
-        
-        // Connexion par email ou téléphone : on passe l'identifiant saisi pour l'authentification
-        Authentication authentication = authenticationManager.authenticate(
-            new UsernamePasswordAuthenticationToken(request.getEmailOrPhone(), request.getPassword())
-        );
-        
-        SecurityContextHolder.getContext().setAuthentication(authentication);
-        String token = tokenProvider.generateToken(authentication);
-        
-        return ResponseEntity.ok(new AuthResponse(token, user));
     }
     
     @PostMapping("/register")
@@ -122,13 +120,9 @@ public class AuthController {
     @PostMapping("/forgot-password")
     public ResponseEntity<?> forgotPassword(@RequestBody AuthRequest request) {
         try {
-            User user = userService.findByEmailOrPhone(request.getEmailOrPhone())
-                    .orElseThrow(() -> new RuntimeException("User not found"));
-            userService.requestPasswordReset(user.getEmail());
-            return ResponseEntity.ok().body(new SuccessResponse("Password reset link has been sent to your email."));
-        } catch (RuntimeException e) {
-            logger.warn("Password reset request failed: {}", e.getMessage());
-            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage()));
+            userService.findByEmailOrPhone(request.getEmailOrPhone()).ifPresent(user ->
+                userService.requestPasswordReset(user.getEmail()));
+            return ResponseEntity.ok().body(new SuccessResponse("If this email is registered, a password reset link has been sent."));
         } catch (Exception e) {
             logger.error("Error during password reset request: {}", e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
@@ -183,35 +177,4 @@ public class AuthController {
         return ResponseEntity.ok(response);
     }
     
-    /**
-     * Endpoint de test pour vérifier l'accès admin
-     */
-    @GetMapping("/test-admin")
-    public ResponseEntity<?> testAdminAccess(Authentication authentication) {
-        if (authentication == null || !authentication.isAuthenticated()) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(new ErrorResponse("Not authenticated"));
-        }
-        
-        UserDetails userDetails = (UserDetails) authentication.getPrincipal();
-        boolean isAdmin = userDetails.getAuthorities().stream()
-                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
-        
-        java.util.Map<String, Object> response = new java.util.HashMap<>();
-        response.put("username", userDetails.getUsername());
-        response.put("authorities", userDetails.getAuthorities().stream()
-                .map(a -> a.getAuthority())
-                .collect(java.util.stream.Collectors.toList()));
-        response.put("isAdmin", isAdmin);
-        response.put("hasRoleAdmin", userDetails.getAuthorities().stream()
-                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN")));
-        
-        if (isAdmin) {
-            response.put("message", "Admin access granted");
-            return ResponseEntity.ok(response);
-        } else {
-            response.put("message", "Admin access denied");
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(response);
-        }
-    }
 }
