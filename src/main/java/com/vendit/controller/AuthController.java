@@ -195,17 +195,12 @@ public class AuthController {
                     .body(new ErrorResponse("User not found"));
         }
         
-        java.util.Map<String, Object> response = new java.util.HashMap<>();
-        response.put("publicId", user.getPublicId());
-        response.put("email", user.getEmail());
-        response.put("role", user.getRole().name());
-        response.put("enabled", user.isEnabled());
+        Map<String, Object> response = userToMap(user);
         response.put("emailVerified", user.isEmailVerified());
         response.put("authorities", authentication.getAuthorities().stream()
                 .map(a -> a.getAuthority())
                 .collect(java.util.stream.Collectors.toList()));
         response.put("authenticated", authentication.isAuthenticated());
-        
         return ResponseEntity.ok(response);
     }
 
@@ -287,6 +282,10 @@ public class AuthController {
         m.put("role", u.getRole() != null ? u.getRole().name() : "USER");
         m.put("enabled", u.isEnabled());
         m.put("creditBalance", u.getCreditBalance() != null ? u.getCreditBalance().doubleValue() : 0.0);
+        if (u.getSellerPlan() != null) {
+            m.put("sellerPlan", u.getSellerPlan().name());
+            m.put("sellerPlanLabel", com.vendit.model.SellerPlanCatalog.get(u.getSellerPlan()).getLabel());
+        }
         return m;
     }
     

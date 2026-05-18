@@ -30,6 +30,9 @@ public class AnnonceCreateRequest {
     @Size(max = 100, message = "Publication type name is too long")
     private String publicationType;
 
+    /** CREDITS (défaut) ou SUBSCRIPTION — utiliser le quota abonnement sans débit crédits. */
+    private String paymentMethod;
+
     /** État du produit (optionnel). Chaîne vide "" acceptée et convertie en null. */
     @JsonDeserialize(using = ConditionDeserializer.class)
     private Annonce.Condition condition;

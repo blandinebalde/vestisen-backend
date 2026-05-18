@@ -24,18 +24,27 @@ import com.vendit.event.AnnonceApprovedEvent;
 import com.vendit.model.Annonce;
 import com.vendit.model.Category;
 import com.vendit.model.CreditConfig;
+import com.vendit.model.PlanBillingCycle;
 import com.vendit.model.PublicationTarif;
+import com.vendit.model.SellerPlan;
+import com.vendit.model.SellerPlanCatalog;
+import com.vendit.model.SellerPlanDefinition;
 import com.vendit.model.User;
 import com.vendit.repository.AnnonceRepository;
 import com.vendit.repository.CategoryRepository;
 import com.vendit.repository.CreditConfigRepository;
 import com.vendit.repository.CreditTransactionRepository;
 import com.vendit.repository.PublicationTarifRepository;
+import com.vendit.repository.SellerPlanConfigRepository;
 import com.vendit.repository.UserRepository;
+import com.vendit.model.SellerPlanConfig;
 import com.vendit.service.ActionLogService;
 import com.vendit.service.AdminStatsService;
+import com.vendit.service.AdminSubscriptionStatsService;
 import com.vendit.service.AnnonceService;
+import com.vendit.service.SellerPlanService;
 import com.vendit.service.UserService;
+import com.vendit.util.PublicationTarifMapper;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -85,6 +94,15 @@ public class AdminController {
 
     @Autowired
     private AdminStatsService adminStatsService;
+
+    @Autowired
+    private SellerPlanService sellerPlanService;
+
+    @Autowired
+    private SellerPlanConfigRepository sellerPlanConfigRepository;
+
+    @Autowired
+    private AdminSubscriptionStatsService adminSubscriptionStatsService;
     
     @Autowired
     private PasswordEncoder passwordEncoder;
@@ -140,15 +158,7 @@ public class AdminController {
             @RequestParam(defaultValue = "20") int size) {
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "id"));
         Page<PublicationTarif> tarifs = tarifRepository.findAll(pageable);
-        return ResponseEntity.ok(tarifs.map(t -> {
-            PublicationTarifDTO dto = new PublicationTarifDTO();
-            dto.setId(t.getId());
-            dto.setTypeName(t.getTypeName());
-            dto.setPrice(t.getPrice());
-            dto.setDurationDays(t.getDurationDays());
-            dto.setActive(t.isActive());
-            return dto;
-        }));
+        return ResponseEntity.ok(tarifs.map(PublicationTarifMapper::toDto));
     }
     
     @PutMapping("/tarifs/{id}")
@@ -157,6 +167,7 @@ public class AdminController {
             @RequestParam(required = false) String typeName,
             @RequestParam(required = false) BigDecimal price,
             @RequestParam(required = false) Integer durationDays,
+            @RequestParam(required = false) Boolean topPublication,
             @RequestParam(required = false) Boolean active) {
         PublicationTarif tarif = tarifRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Tarif not found"));
@@ -168,21 +179,17 @@ public class AdminController {
             tarif.setPrice(price);
         }
         if (durationDays != null) {
-            tarif.setDurationDays(durationDays <= 0 ? 0 : durationDays); // 0 = illimité (colonne NOT NULL)
+            tarif.setDurationDays(PublicationTarifMapper.normalizeDurationDays(durationDays));
+        }
+        if (topPublication != null) {
+            tarif.setTopPublication(topPublication);
         }
         if (active != null) {
             tarif.setActive(active);
         }
         
         PublicationTarif saved = tarifRepository.save(tarif);
-        
-        PublicationTarifDTO dto = new PublicationTarifDTO();
-        dto.setId(saved.getId());
-        dto.setTypeName(saved.getTypeName());
-        dto.setPrice(saved.getPrice());
-        dto.setDurationDays(saved.getDurationDays());
-        dto.setActive(saved.isActive());
-        return ResponseEntity.ok(dto);
+        return ResponseEntity.ok(PublicationTarifMapper.toDto(saved));
     }
     
     @PostMapping("/tarifs")
@@ -193,19 +200,97 @@ public class AdminController {
         PublicationTarif tarif = new PublicationTarif();
         tarif.setTypeName(request.getTypeName().trim());
         tarif.setPrice(request.getPrice());
-        Integer reqDays = request.getDurationDays();
-        tarif.setDurationDays(reqDays != null && reqDays > 0 ? reqDays : 0); // 0 = illimité
+        tarif.setDurationDays(PublicationTarifMapper.normalizeDurationDays(request.getDurationDays()));
+        tarif.setTopPublication(request.isTopPublication());
         tarif.setActive(request.isActive());
         
         PublicationTarif saved = tarifRepository.save(tarif);
-        
-        PublicationTarifDTO dto = new PublicationTarifDTO();
-        dto.setId(saved.getId());
-        dto.setTypeName(saved.getTypeName());
-        dto.setPrice(saved.getPrice());
-        dto.setDurationDays(saved.getDurationDays());
-        dto.setActive(saved.isActive());
-        return ResponseEntity.status(HttpStatus.CREATED).body(dto);
+        return ResponseEntity.status(HttpStatus.CREATED).body(PublicationTarifMapper.toDto(saved));
+    }
+
+    @GetMapping("/seller-plans")
+    public ResponseEntity<List<SellerPlanConfigDTO>> getSellerPlanConfigs() {
+        List<SellerPlanConfigDTO> list = sellerPlanConfigRepository.findAll(
+                        Sort.by(Sort.Direction.ASC, "displayOrder"))
+                .stream()
+                .map(this::toSellerPlanConfigDto)
+                .collect(Collectors.toList());
+        if (list.isEmpty()) {
+            list = SellerPlanCatalog.all().stream().map(def -> {
+                SellerPlanConfigDTO dto = new SellerPlanConfigDTO();
+                dto.setPlan(def.getPlan().name());
+                dto.setLabel(def.getLabel());
+                dto.setMonthlyPriceFcfa(def.getMonthlyPriceFcfa());
+                dto.setAnnualPriceFcfa(def.annualPriceFcfa());
+                dto.setCommissionPercent(def.getCommissionPercent());
+                dto.setMaxActivePublications(def.getMaxActivePublications());
+                dto.setUnlimitedPublications(def.isUnlimitedPublications());
+                dto.setMonthlyBoostsIncluded(def.getMonthlyBoostsIncluded());
+                dto.setActive(true);
+                return dto;
+            }).collect(Collectors.toList());
+        }
+        return ResponseEntity.ok(list);
+    }
+
+    @GetMapping("/seller-plans/stats")
+    public ResponseEntity<SubscriptionPlanStatsDTO> getSellerPlanStats() {
+        return ResponseEntity.ok(adminSubscriptionStatsService.getStats());
+    }
+
+    @PutMapping("/seller-plans/{plan}")
+    public ResponseEntity<SellerPlanConfigDTO> updateSellerPlanConfig(
+            @PathVariable String plan,
+            @RequestBody SellerPlanConfigDTO body) {
+        SellerPlan planEnum;
+        try {
+            planEnum = SellerPlan.valueOf(plan.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().build();
+        }
+        SellerPlanConfig config = sellerPlanConfigRepository.findById(planEnum)
+                .orElseGet(() -> {
+                    SellerPlanConfig c = new SellerPlanConfig();
+                    c.setPlanCode(planEnum);
+                    return c;
+                });
+        if (body.getLabel() != null && !body.getLabel().isBlank()) {
+            config.setLabel(body.getLabel().trim());
+        }
+        if (body.getMonthlyPriceFcfa() != null) {
+            config.setMonthlyPriceFcfa(body.getMonthlyPriceFcfa());
+        }
+        if (body.getCommissionPercent() != null) {
+            config.setCommissionPercent(body.getCommissionPercent());
+        }
+        if (body.isUnlimitedPublications()) {
+            config.setMaxActivePublications(-1);
+        } else if (body.getMaxActivePublications() > 0) {
+            config.setMaxActivePublications(body.getMaxActivePublications());
+        }
+        config.setMonthlyBoostsIncluded(body.getMonthlyBoostsIncluded());
+        config.setActive(body.isActive());
+        if (body.getDisplayOrder() > 0) {
+            config.setDisplayOrder(body.getDisplayOrder());
+        }
+        SellerPlanConfig saved = sellerPlanConfigRepository.save(config);
+        return ResponseEntity.ok(toSellerPlanConfigDto(saved));
+    }
+
+    private SellerPlanConfigDTO toSellerPlanConfigDto(SellerPlanConfig c) {
+        SellerPlanDefinition def = c.toDefinition();
+        SellerPlanConfigDTO dto = new SellerPlanConfigDTO();
+        dto.setPlan(c.getPlanCode().name());
+        dto.setLabel(c.getLabel());
+        dto.setMonthlyPriceFcfa(c.getMonthlyPriceFcfa());
+        dto.setAnnualPriceFcfa(def.annualPriceFcfa());
+        dto.setCommissionPercent(c.getCommissionPercent());
+        dto.setMaxActivePublications(c.getMaxActivePublications());
+        dto.setUnlimitedPublications(c.getMaxActivePublications() < 0);
+        dto.setMonthlyBoostsIncluded(c.getMonthlyBoostsIncluded());
+        dto.setActive(c.isActive());
+        dto.setDisplayOrder(c.getDisplayOrder());
+        return dto;
     }
     
     @DeleteMapping("/tarifs/{id}")
@@ -307,6 +392,34 @@ public class AdminController {
     public ResponseEntity<?> deactivateUser(@PathVariable UUID publicId) {
         return setUserEnabled(publicId, false, "Désactivation du compte");
     }
+
+    @PostMapping("/users/{publicId}/seller-plan")
+    public ResponseEntity<?> setUserSellerPlan(
+            @PathVariable UUID publicId,
+            @Valid @RequestBody SellerPlanSubscribeRequest request) {
+        User user = userRepository.findByPublicId(publicId)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+        if (user.getRole() != User.Role.VENDEUR && user.getRole() != User.Role.ADMIN) {
+            return ResponseEntity.badRequest().body(new ErrorResponse("Plan vendeur réservé aux comptes vendeur"));
+        }
+        SellerPlan plan;
+        try {
+            plan = SellerPlan.valueOf(request.getPlan().trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse("Plan invalide"));
+        }
+        PlanBillingCycle cycle = PlanBillingCycle.MONTHLY;
+        if (request.getBillingCycle() != null && !request.getBillingCycle().isBlank()) {
+            try {
+                cycle = PlanBillingCycle.valueOf(request.getBillingCycle().trim().toUpperCase());
+            } catch (IllegalArgumentException e) {
+                return ResponseEntity.badRequest().body(new ErrorResponse("Cycle de facturation invalide"));
+            }
+        }
+        sellerPlanService.setPlanByAdmin(user, plan, cycle);
+        User saved = userRepository.findByPublicId(publicId).orElseThrow();
+        return ResponseEntity.ok(toUserDto(saved, safeCountAnnoncesBySeller(saved.getId())));
+    }
     
     @PutMapping("/users/{publicId}")
     public ResponseEntity<UserDTO> updateUser(@PathVariable UUID publicId, @RequestBody UserUpdateRequest request) {
@@ -397,6 +510,12 @@ public class AdminController {
         dto.setUpdatedAt(user.getUpdatedAt());
         dto.setAnnoncesCount(annoncesCount);
         dto.setCreditBalance(user.getCreditBalance());
+        if (user.getSellerPlan() != null) {
+            var def = SellerPlanCatalog.get(user.getSellerPlan());
+            dto.setSellerPlan(user.getSellerPlan().name());
+            dto.setSellerPlanLabel(def.getLabel());
+            dto.setSellerCommissionPercent(def.getCommissionPercent());
+        }
         return dto;
     }
 

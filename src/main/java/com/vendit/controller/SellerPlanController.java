@@ -6,6 +6,7 @@ import com.vendit.model.SellerPlan;
 import com.vendit.model.User;
 import com.vendit.repository.UserRepository;
 import com.vendit.service.SellerPlanService;
+import com.vendit.service.SellerSubscriptionService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -28,6 +29,9 @@ public class SellerPlanController {
     @Autowired
     private UserRepository userRepository;
 
+    @Autowired
+    private SellerSubscriptionService sellerSubscriptionService;
+
     @GetMapping("/catalog")
     public ResponseEntity<List<SellerPlanCatalogItemDTO>> getCatalog() {
         return ResponseEntity.ok(sellerPlanService.getCatalog());
@@ -45,6 +49,61 @@ public class SellerPlanController {
             @RequestParam BigDecimal amount,
             Authentication authentication) {
         return ResponseEntity.ok(sellerPlanService.previewCommission(amount, currentUser(authentication)));
+    }
+
+    @PreAuthorize("hasAuthority('perm:credit:vendor')")
+    @GetMapping("/quote")
+    public ResponseEntity<SubscriptionQuoteDTO> quote(
+            @RequestParam String plan,
+            @RequestParam(required = false) String billingCycle,
+            Authentication authentication) {
+        return ResponseEntity.ok(sellerSubscriptionService.quote(
+                currentUser(authentication),
+                parsePlan(plan),
+                parseBillingCycle(billingCycle)));
+    }
+
+    @PreAuthorize("hasAuthority('perm:credit:vendor')")
+    @PostMapping("/checkout")
+    public ResponseEntity<SubscriptionCheckoutDTO> checkout(
+            @Valid @RequestBody SubscriptionCheckoutRequest request,
+            Authentication authentication) {
+        return ResponseEntity.ok(sellerSubscriptionService.startCheckout(
+                currentUser(authentication),
+                parsePlan(request.getPlan()),
+                parseBillingCycle(request.getBillingCycle()),
+                request.getIdempotencyKey()));
+    }
+
+    @PreAuthorize("hasAuthority('perm:credit:vendor')")
+    @PostMapping("/confirm")
+    public ResponseEntity<SellerSubscriptionStatusDTO> confirm(
+            @Valid @RequestBody SubscriptionConfirmRequest request,
+            Authentication authentication) {
+        return ResponseEntity.ok(sellerSubscriptionService.confirmCheckout(
+                currentUser(authentication),
+                request.getCheckoutId(),
+                request.getIdempotencyKey()));
+    }
+
+    @PreAuthorize("hasAuthority('perm:credit:vendor')")
+    @PostMapping("/schedule-downgrade")
+    public ResponseEntity<SellerSubscriptionStatusDTO> scheduleDowngrade(
+            @Valid @RequestBody ScheduleDowngradeRequest request,
+            Authentication authentication) {
+        return ResponseEntity.ok(sellerSubscriptionService.scheduleDowngrade(
+                currentUser(authentication),
+                parsePlan(request.getPlan()),
+                request.getExpectedVersion()));
+    }
+
+    @PreAuthorize("hasAuthority('perm:credit:vendor')")
+    @PostMapping("/cancel-scheduled-downgrade")
+    public ResponseEntity<SellerSubscriptionStatusDTO> cancelScheduledDowngrade(
+            @RequestParam(required = false) Long expectedVersion,
+            Authentication authentication) {
+        return ResponseEntity.ok(sellerSubscriptionService.cancelScheduledDowngrade(
+                currentUser(authentication), expectedVersion));
     }
 
     @PreAuthorize("hasAuthority('perm:credit:vendor')")

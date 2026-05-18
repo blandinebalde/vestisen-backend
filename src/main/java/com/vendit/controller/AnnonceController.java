@@ -14,9 +14,11 @@ import com.vendit.dto.AnnonceCreateRequest;
 import com.vendit.dto.AnnonceDTO;
 import com.vendit.dto.AnnonceFilterRequest;
 import com.vendit.dto.AnnonceSellerUpdateRequest;
+import com.vendit.dto.AnnonceValidationResponseDTO;
 import com.vendit.dto.MyAnnoncesSummaryDTO;
 import com.vendit.model.User;
 import com.vendit.repository.UserRepository;
+import com.vendit.service.AnnonceCreateValidationService;
 import com.vendit.service.AnnonceService;
 
 import java.util.List;
@@ -31,6 +33,9 @@ public class AnnonceController {
     
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private AnnonceCreateValidationService annonceCreateValidationService;
 
     @GetMapping("/public")
     public ResponseEntity<Page<AnnonceDTO>> getPublicAnnonces(AnnonceFilterRequest filter) {
@@ -60,14 +65,54 @@ public class AnnonceController {
     }
     
     @PreAuthorize("hasAuthority('perm:annonce:create')")
+    @PostMapping("/validate/details")
+    public ResponseEntity<AnnonceValidationResponseDTO> validateCreateDetails(
+            @RequestBody AnnonceCreateRequest request,
+            Authentication authentication) {
+        User user = resolveUser(authentication);
+        return ResponseEntity.ok(annonceCreateValidationService.validateDetails(request, user));
+    }
+
+    @PreAuthorize("hasAuthority('perm:annonce:create')")
+    @PostMapping("/validate/visibility")
+    public ResponseEntity<AnnonceValidationResponseDTO> validateCreateVisibility(
+            @RequestBody AnnonceCreateRequest request,
+            Authentication authentication) {
+        User user = resolveUser(authentication);
+        return ResponseEntity.ok(annonceCreateValidationService.validateVisibility(request, user));
+    }
+
+    @PreAuthorize("hasAuthority('perm:annonce:create')")
+    @PostMapping(value = "/validate/photos", consumes = "multipart/form-data")
+    public ResponseEntity<AnnonceValidationResponseDTO> validateCreatePhotos(
+            @RequestParam(value = "files", required = false) MultipartFile[] files,
+            Authentication authentication) {
+        User user = resolveUser(authentication);
+        return ResponseEntity.ok(annonceCreateValidationService.validatePhotos(files, user));
+    }
+
+    @PreAuthorize("hasAuthority('perm:annonce:create')")
+    @PostMapping("/validate/confirm")
+    public ResponseEntity<AnnonceValidationResponseDTO> validateCreateConfirm(
+            @RequestBody AnnonceCreateRequest request,
+            Authentication authentication) {
+        User user = resolveUser(authentication);
+        return ResponseEntity.ok(annonceCreateValidationService.validateConfirm(request, user));
+    }
+
+    @PreAuthorize("hasAuthority('perm:annonce:create')")
     @PostMapping
     public ResponseEntity<AnnonceDTO> createAnnonce(
             @Valid @RequestBody AnnonceCreateRequest request,
             Authentication authentication) {
-        UserDetails userDetails = (UserDetails) authentication.getPrincipal();
-        User user = userRepository.findByEmail(userDetails.getUsername())
-                .orElseThrow(() -> new RuntimeException("User not found"));
+        User user = resolveUser(authentication);
         return ResponseEntity.ok(annonceService.createAnnonce(request, user));
+    }
+
+    private User resolveUser(Authentication authentication) {
+        UserDetails userDetails = (UserDetails) authentication.getPrincipal();
+        return userRepository.findByEmail(userDetails.getUsername())
+                .orElseThrow(() -> new RuntimeException("User not found"));
     }
     
     @PreAuthorize("hasAuthority('perm:annonce:seller_read')")

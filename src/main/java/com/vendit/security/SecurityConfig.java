@@ -113,6 +113,7 @@ public class SecurityConfig {
                     "/api/categories",
                     "/api/config/**",
                     "/api/credits/config",
+                    "/api/webhooks/stripe",
                     "/error",
                     "/actuator/health"
                 ).permitAll()

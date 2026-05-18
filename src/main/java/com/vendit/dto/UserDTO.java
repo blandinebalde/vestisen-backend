@@ -26,4 +26,7 @@ public class UserDTO {
     private LocalDateTime updatedAt;
     private int annoncesCount; // Nombre d'annonces de l'utilisateur
     private BigDecimal creditBalance; // Solde de crédits (pour publier des annonces)
+    private String sellerPlan;
+    private String sellerPlanLabel;
+    private java.math.BigDecimal sellerCommissionPercent;
 }

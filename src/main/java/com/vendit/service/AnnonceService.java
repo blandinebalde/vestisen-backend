@@ -21,6 +21,7 @@ import com.vendit.dto.MyAnnoncesSummaryDTO;
 import com.vendit.config.CatalogPageLimits;
 import com.vendit.model.Annonce;
 import com.vendit.model.Category;
+import com.vendit.model.PublicationPaymentMethod;
 import com.vendit.model.PublicationTarif;
 import com.vendit.model.User;
 import com.vendit.repository.AnnonceRepository;
@@ -72,7 +73,6 @@ public class AnnonceService {
     private SellerPlanService sellerPlanService;
     
     public AnnonceDTO createAnnonce(AnnonceCreateRequest request, User seller) {
-        sellerPlanService.assertCanPublish(seller);
         Category category = categoryRepository.findById(request.getCategoryId())
                 .orElseThrow(() -> new RuntimeException("Category not found: " + request.getCategoryId()));
         if (!category.isActive()) {
@@ -114,14 +114,23 @@ public class AnnonceService {
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.BAD_REQUEST,
                         "Type de publication inconnu ou inactif : " + publicationType));
-        
-        java.math.BigDecimal creditCost = tarif.getPrice();
-        if (creditCost == null || creditCost.compareTo(java.math.BigDecimal.ZERO) <= 0) {
-            creditCost = java.math.BigDecimal.ZERO;
+
+        PublicationPaymentMethod paymentMethod = parsePaymentMethod(request.getPaymentMethod());
+
+        if (paymentMethod == PublicationPaymentMethod.SUBSCRIPTION) {
+            sellerPlanService.applySubscriptionPublication(seller, tarif);
+            annonce.setPublicationCreditCost(BigDecimal.ZERO);
+            annonce.setPublicationPaymentMethod(PublicationPaymentMethod.SUBSCRIPTION);
+            return toDTO(annonceRepository.save(annonce));
+        }
+
+        BigDecimal creditCost = tarif.getPrice();
+        if (creditCost == null || creditCost.compareTo(BigDecimal.ZERO) <= 0) {
+            creditCost = BigDecimal.ZERO;
         }
         long ledgerEntryId = creditService.deductCreditsForPublication(seller, creditCost, annonce.getCode());
         annonce.setPublicationCreditCost(creditCost);
-        // expiresAt sera défini à l’approbation (décompte à partir de la publication acceptée)
+        annonce.setPublicationPaymentMethod(PublicationPaymentMethod.CREDITS);
 
         Annonce saved = annonceRepository.save(annonce);
         creditService.attachPublicationLedgerToAnnonce(ledgerEntryId, saved.getId());
@@ -281,6 +290,17 @@ public class AnnonceService {
     
     private static final String CODE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     private static final SecureRandom RANDOM = new SecureRandom();
+
+    private static PublicationPaymentMethod parsePaymentMethod(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return PublicationPaymentMethod.CREDITS;
+        }
+        try {
+            return PublicationPaymentMethod.valueOf(raw.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Mode de paiement invalide (CREDITS ou SUBSCRIPTION)");
+        }
+    }
 
     private String generateUniqueCode() {
         StringBuilder sb = new StringBuilder(18);

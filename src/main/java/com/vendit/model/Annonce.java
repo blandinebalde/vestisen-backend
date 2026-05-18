@@ -67,6 +67,10 @@ public class Annonce {
     /** Coût en crédits de la publication (renseigné à la création, pour tri catalogue). */
     @Column(name = "publication_credit_cost", precision = 12, scale = 2)
     private java.math.BigDecimal publicationCreditCost;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "publication_payment_method", nullable = false, length = 20)
+    private PublicationPaymentMethod publicationPaymentMethod = PublicationPaymentMethod.CREDITS;
     
     /** État du produit. Colonne {@code article_condition} : {@code condition} est réservé en MySQL. */
     @Enumerated(EnumType.STRING)
@@ -102,6 +106,10 @@ public class Annonce {
     @EqualsAndHashCode.Exclude
     private User buyer;
     
+    /** Mise en pause automatique (ex. downgrade forcé vers Gratuit) — l'annonce n'est pas supprimée. */
+    @Column(name = "plan_paused", nullable = false)
+    private boolean planPaused = false;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private Status status = Status.PENDING;

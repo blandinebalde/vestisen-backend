@@ -120,7 +120,7 @@ public interface AnnonceRepository extends JpaRepository<Annonce, Long> {
 
     long countBySeller_Id(Long sellerId);
 
-    @Query("SELECT COUNT(a) FROM Annonce a WHERE a.seller.id = :sellerId AND a.status IN ('PENDING', 'APPROVED')")
+    @Query("SELECT COUNT(a) FROM Annonce a WHERE a.seller.id = :sellerId AND a.status IN ('PENDING', 'APPROVED') AND a.planPaused = false")
     long countActivePublicationsBySeller(@Param("sellerId") Long sellerId);
 
     /** Somme des crédits dépensés (publicationCreditCost sur toutes les annonces). */

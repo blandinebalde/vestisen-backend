@@ -23,13 +23,12 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
 @Transactional
 public class SellerPlanService {
-
-    private static final int GRACE_DAYS = 7;
 
     @Autowired
     private UserRepository userRepository;
@@ -40,6 +39,9 @@ public class SellerPlanService {
     @Autowired
     private SaleCommissionRepository saleCommissionRepository;
 
+    @Autowired
+    private SellerSubscriptionService sellerSubscriptionService;
+
     @Value("${stripe.secret-key:}")
     private String stripeSecretKey;
 
@@ -48,18 +50,20 @@ public class SellerPlanService {
     }
 
     public SellerSubscriptionStatusDTO getSubscriptionStatus(User user) {
-        User u = refreshPlanState(userRepository.findById(user.getId()).orElseThrow());
-        return buildStatus(u);
+        return sellerSubscriptionService.buildStatusDto(user);
     }
 
     public CommissionBreakdownDTO previewCommission(BigDecimal saleAmount, User seller) {
-        User u = refreshPlanState(userRepository.findById(seller.getId()).orElseThrow());
-        return computeBreakdown(saleAmount, SellerPlanCatalog.get(u.getSellerPlan()));
+        User u = userRepository.findById(seller.getId()).orElseThrow();
+        SellerSubscription sub = sellerSubscriptionService.getOrCreate(u);
+        SellerPlanDefinition def = SellerPlanCatalog.get(sub.getPlanType());
+        return computeBreakdown(saleAmount, def);
     }
 
     public void assertCanPublish(User seller) {
-        User u = refreshPlanState(userRepository.findByIdForUpdate(seller.getId()).orElseThrow());
-        SellerPlanDefinition def = SellerPlanCatalog.get(u.getSellerPlan());
+        User u = userRepository.findByIdForUpdate(seller.getId()).orElseThrow();
+        SellerSubscription sub = sellerSubscriptionService.getOrCreate(u);
+        SellerPlanDefinition def = SellerPlanCatalog.get(sub.getPlanType());
         if (def.isUnlimitedPublications()) {
             return;
         }
@@ -77,9 +81,10 @@ public class SellerPlanService {
         if (saleCommissionRepository.existsByAnnonce_Id(annonce.getId())) {
             return saleCommissionRepository.findByAnnonce_Id(annonce.getId()).orElse(null);
         }
-        User seller = refreshPlanState(userRepository.findById(annonce.getSeller().getId()).orElseThrow());
+        User seller = userRepository.findById(annonce.getSeller().getId()).orElseThrow();
+        SellerSubscription sub = sellerSubscriptionService.getOrCreate(seller);
         BigDecimal saleAmount = annonce.getPrice() != null ? annonce.getPrice() : BigDecimal.ZERO;
-        SellerPlanDefinition def = SellerPlanCatalog.get(seller.getSellerPlan());
+        SellerPlanDefinition def = SellerPlanCatalog.get(sub.getPlanType());
         CommissionBreakdownDTO breakdown = computeBreakdown(saleAmount, def);
 
         SaleCommission sc = new SaleCommission();
@@ -90,34 +95,43 @@ public class SellerPlanService {
         sc.setCommissionPercent(breakdown.getCommissionPercent());
         sc.setCommissionAmountFcfa(breakdown.getCommissionAmountFcfa());
         sc.setSellerNetFcfa(breakdown.getSellerNetFcfa());
-        sc.setSellerPlanAtSale(seller.getSellerPlan());
+        sc.setSellerPlanAtSale(sub.getPlanType());
         sc.setCreatedAt(LocalDateTime.now());
         return saleCommissionRepository.save(sc);
     }
 
     /**
-     * Souscription au plan. Stripe Billing à brancher : si clé Stripe absente, activation locale (dev / démo).
+     * Changement de plan : downgrade planifié ; upgrade via /checkout + confirmation (webhook ou démo).
      */
     public SellerSubscriptionStatusDTO subscribe(User seller, SellerPlan targetPlan, PlanBillingCycle cycle) {
         if (seller.getRole() != User.Role.VENDEUR && seller.getRole() != User.Role.ADMIN) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Réservé aux vendeurs");
         }
-        User u = userRepository.findByIdForUpdate(seller.getId()).orElseThrow();
-        refreshPlanState(u);
-
-        if (targetPlan == SellerPlan.FREE) {
-            applyPlan(u, SellerPlan.FREE, null, false);
-            return buildStatus(userRepository.save(u));
+        SellerSubscription sub = sellerSubscriptionService.getOrCreate(seller);
+        SellerPlan current = sub.getPlanType();
+        if (targetPlan == current) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Ce plan est déjà actif.");
         }
-
-        if (!isStripeConfigured()) {
-            applyPlan(u, targetPlan, cycle != null ? cycle : PlanBillingCycle.MONTHLY, true);
-            return buildStatus(userRepository.save(u));
+        if (SubscriptionProrationService.planRank(targetPlan) < SubscriptionProrationService.planRank(current)) {
+            return sellerSubscriptionService.scheduleDowngrade(seller, targetPlan, sub.getVersion());
         }
-
-        throw new ResponseStatusException(
-                HttpStatus.NOT_IMPLEMENTED,
-                "Paiement abonnement Stripe Billing à configurer. Utilisez la clé Stripe ou le mode démo sans clé.");
+        if (isStripeConfigured()) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Utilisez POST /api/seller/plan/checkout pour souscrire ou upgrader avec paiement sécurisé.");
+        }
+        var quote = sellerSubscriptionService.quote(seller, targetPlan, cycle);
+        sellerSubscriptionService.applyPaidUpgrade(
+                seller,
+                targetPlan,
+                cycle != null ? cycle : PlanBillingCycle.MONTHLY,
+                quote.getAmountDueCents(),
+                "demo-" + UUID.randomUUID(),
+                null,
+                null,
+                SubscriptionActorType.SELLER,
+                seller.getId());
+        return sellerSubscriptionService.buildStatusDto(seller);
     }
 
     public Page<SaleCommissionDTO> listCommissionsForSeller(User seller, int page, int size) {
@@ -128,75 +142,64 @@ public class SellerPlanService {
 
     public void setPlanByAdmin(User seller, SellerPlan plan, PlanBillingCycle cycle) {
         User u = userRepository.findByIdForUpdate(seller.getId()).orElseThrow();
-        applyPlan(u, plan, cycle, plan != SellerPlan.FREE);
-        userRepository.save(u);
+        SellerSubscription sub = sellerSubscriptionService.getOrCreate(u);
+        if (plan == SellerPlan.FREE) {
+            sellerSubscriptionService.forceDowngradeToFree(sub, "Modification admin");
+            return;
+        }
+        sellerSubscriptionService.applyPaidUpgrade(
+                u, plan, cycle != null ? cycle : PlanBillingCycle.MONTHLY, 0L,
+                "admin-" + UUID.randomUUID(), null, null,
+                SubscriptionActorType.ADMIN, null);
+    }
+
+    public static final int MAX_ANNONCE_LIFETIME_DAYS = 365;
+
+    public boolean isSubscriptionPeriodActive(User seller) {
+        SellerSubscription sub = sellerSubscriptionService.getOrCreate(seller);
+        return sellerSubscriptionService.isSubscriptionPeriodActive(sub);
+    }
+
+    public boolean canPayWithSubscription(User seller) {
+        if (!isSubscriptionPeriodActive(seller)) {
+            return false;
+        }
+        SellerSubscription sub = sellerSubscriptionService.getOrCreate(seller);
+        SellerPlanDefinition def = SellerPlanCatalog.get(sub.getPlanType());
+        if (def.isUnlimitedPublications()) {
+            return true;
+        }
+        long active = annonceRepository.countActivePublicationsBySeller(seller.getId());
+        return active < def.getMaxActivePublications();
+    }
+
+    public void applySubscriptionPublication(User seller, PublicationTarif tarif) {
+        if (!canPayWithSubscription(seller)) {
+            if (!isSubscriptionPeriodActive(seller)) {
+                throw new ResponseStatusException(
+                        HttpStatus.UNPROCESSABLE_ENTITY,
+                        "Votre abonnement n'est plus actif. Renouvelez-le ou payez en crédits.");
+            }
+            throw new ResponseStatusException(
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                    "Quota de publications actives atteint pour votre plan. Passez à un plan supérieur ou payez en crédits.");
+        }
+        if (tarif != null && tarif.isTopPublication()) {
+            User u = userRepository.findByIdForUpdate(seller.getId()).orElseThrow();
+            SellerSubscription sub = sellerSubscriptionService.getOrCreate(u);
+            if (sub.getBoostsRemaining() <= 0) {
+                throw new ResponseStatusException(
+                        HttpStatus.UNPROCESSABLE_ENTITY,
+                        "Aucun boost disponible sur votre plan pour une top publication. Payez en crédits ou attendez le prochain cycle.");
+            }
+            sub.setBoostsRemaining(sub.getBoostsRemaining() - 1);
+            sellerSubscriptionService.syncUserFromSubscription(u, sub);
+        }
     }
 
     @Scheduled(cron = "0 15 * * * ?")
     public void downgradeExpiredGracePlans() {
-        LocalDateTime now = LocalDateTime.now();
-        List<User> vendeurs = userRepository.findByRoleAndPlanGraceUntilBefore(User.Role.VENDEUR, now);
-        for (User u : vendeurs) {
-            if (u.getSellerPlan() == SellerPlan.FREE) {
-                continue;
-            }
-            applyPlan(u, SellerPlan.FREE, null, false);
-            userRepository.save(u);
-        }
-    }
-
-    private User refreshPlanState(User u) {
-        if (u == null) {
-            return null;
-        }
-        if (u.getSellerPlan() == null) {
-            u.setSellerPlan(SellerPlan.FREE);
-        }
-        LocalDateTime now = LocalDateTime.now();
-        if (u.getPlanPeriodEnd() != null && now.isAfter(u.getPlanPeriodEnd())
-                && (u.getPlanGraceUntil() == null || now.isAfter(u.getPlanGraceUntil()))
-                && u.getSellerPlan() != SellerPlan.FREE) {
-            applyPlan(u, SellerPlan.FREE, null, false);
-            userRepository.save(u);
-        } else {
-            syncBoostsForCurrentPeriod(u);
-        }
-        return u;
-    }
-
-    private void applyPlan(User u, SellerPlan plan, PlanBillingCycle cycle, boolean paidActive) {
-        SellerPlanDefinition def = SellerPlanCatalog.get(plan);
-        u.setSellerPlan(plan);
-        u.setPlanBillingCycle(plan == SellerPlan.FREE ? null : cycle);
-        LocalDateTime now = LocalDateTime.now();
-        if (paidActive && plan != SellerPlan.FREE) {
-            u.setPlanPeriodStart(now);
-            int months = cycle == PlanBillingCycle.ANNUAL ? 12 : 1;
-            u.setPlanPeriodEnd(now.plusMonths(months));
-            u.setPlanGraceUntil(null);
-            u.setBoostsPeriodStart(now);
-            u.setBoostsRemaining(def.getMonthlyBoostsIncluded());
-        } else {
-            u.setPlanPeriodStart(null);
-            u.setPlanPeriodEnd(null);
-            u.setPlanGraceUntil(null);
-            u.setStripeSubscriptionId(null);
-            u.setBoostsPeriodStart(null);
-            u.setBoostsRemaining(0);
-        }
-    }
-
-    private void syncBoostsForCurrentPeriod(User u) {
-        if (u.getSellerPlan() == SellerPlan.FREE) {
-            return;
-        }
-        SellerPlanDefinition def = SellerPlanCatalog.get(u.getSellerPlan());
-        LocalDateTime periodStart = u.getBoostsPeriodStart();
-        LocalDateTime planStart = u.getPlanPeriodStart();
-        if (planStart != null && (periodStart == null || periodStart.isBefore(planStart))) {
-            u.setBoostsPeriodStart(planStart);
-            u.setBoostsRemaining(def.getMonthlyBoostsIncluded());
-        }
+        sellerSubscriptionService.enforceGraceExpiry();
     }
 
     private CommissionBreakdownDTO computeBreakdown(BigDecimal saleAmount, SellerPlanDefinition def) {
@@ -206,28 +209,6 @@ public class SellerPlanService {
                 .divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
         BigDecimal net = amount.subtract(commission).max(BigDecimal.ZERO);
         return new CommissionBreakdownDTO(amount, pct, commission, net, def.getPlan().name());
-    }
-
-    private SellerSubscriptionStatusDTO buildStatus(User u) {
-        SellerPlanDefinition def = SellerPlanCatalog.get(u.getSellerPlan());
-        long active = annonceRepository.countActivePublicationsBySeller(u.getId());
-        LocalDateTime now = LocalDateTime.now();
-        boolean grace = u.getPlanGraceUntil() != null && !now.isAfter(u.getPlanGraceUntil());
-        return new SellerSubscriptionStatusDTO(
-                u.getSellerPlan().name(),
-                def.getLabel(),
-                def.getCommissionPercent(),
-                def.getMaxActivePublications(),
-                def.isUnlimitedPublications(),
-                active,
-                u.getBoostsRemaining(),
-                def.getMonthlyBoostsIncluded(),
-                u.getPlanBillingCycle() != null ? u.getPlanBillingCycle().name() : null,
-                u.getPlanPeriodStart(),
-                u.getPlanPeriodEnd(),
-                u.getPlanGraceUntil(),
-                grace,
-                u.getCreditBalance() != null ? u.getCreditBalance() : BigDecimal.ZERO);
     }
 
     private SellerPlanCatalogItemDTO toCatalogItem(SellerPlanDefinition d) {

@@ -50,12 +50,11 @@ public class AnnonceApprovalObserver {
         annonce.setPublishedAt(now);
 
         PublicationTarif tarif = tarifRepository.findByTypeNameAndActiveTrue(annonce.getPublicationType()).orElse(null);
-        Integer days = tarif != null ? tarif.getDurationDays() : null;
-        if (days != null && days > 0) {
-            annonce.setExpiresAt(now.plusDays(days));
-        } else {
-            annonce.setExpiresAt(null);
+        int days = com.vendit.service.SellerPlanService.MAX_ANNONCE_LIFETIME_DAYS;
+        if (tarif != null && tarif.getDurationDays() != null && tarif.getDurationDays() > 0) {
+            days = Math.min(tarif.getDurationDays(), com.vendit.service.SellerPlanService.MAX_ANNONCE_LIFETIME_DAYS);
         }
+        annonce.setExpiresAt(now.plusDays(days));
 
         annonceRepository.save(annonce);
         User seller = annonce.getSeller();

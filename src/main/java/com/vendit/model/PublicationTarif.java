@@ -30,9 +30,13 @@ public class PublicationTarif {
     @Column(nullable = false)
     private BigDecimal price;
     
-    /** Durée en jours ; null ou 0 = illimitée */
+    /** Durée en jours ; null ou 0 = durée max plateforme (365 j) à l'approbation */
     @Column(name = "duration_days")
     private Integer durationDays;
+
+    /** Type « top publication » : consomme un boost abonnement si paiement SUBSCRIPTION */
+    @Column(name = "top_publication", nullable = false)
+    private boolean topPublication = false;
     
     private boolean active = true;
     

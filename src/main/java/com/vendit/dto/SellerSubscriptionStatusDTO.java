@@ -25,4 +25,14 @@ public class SellerSubscriptionStatusDTO {
     private LocalDateTime planGraceUntil;
     private boolean inGracePeriod;
     private BigDecimal creditBalance;
+    /** Abonnement encore valide (période payante ou Gratuit). */
+    private boolean subscriptionPeriodActive;
+    /** Peut publier en utilisant le quota abonnement (sans crédits). */
+    private boolean canPayWithSubscription;
+    /** ACTIVE, PAST_DUE, CANCELLED, TRIALING */
+    private String subscriptionStatus;
+    private String scheduledDowngrade;
+    private String scheduledDowngradeLabel;
+    private boolean downgradeLocked;
+    private Long subscriptionVersion;
 }
